@@ -32,3 +32,6 @@ Desktop_app/Backend/wipe-data.js
 frontend_images/Screenshot from *.png
 
 Desktop_app/frontend/app/.env
+
+# electron-builder output (Task 16)
+Desktop_app/release/

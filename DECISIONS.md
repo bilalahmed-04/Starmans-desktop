@@ -103,7 +103,7 @@
 
 **Why:** Enables starting backend route-rewrite work immediately without needing a Windows machine for every development iteration. The final desktop installer still targets Windows specifically (SQL Server Express/LocalDB via the Windows installer) — this Linux instance is for backend development and testing only, not a substitute for eventual Windows/installer testing.
 
-**Open item:** `sa` password for the local MSSQL instance not yet confirmed/known — needs to be resolved before local backend development against this instance can proceed.
+**Resolved 2026-08-13:** user set the `sa` password locally and confirmed the server is running. `.env.example`'s template committed a real password value by mistake (not gitignored) — scrubbed back to a blank placeholder before any commit was made; the working value now lives only in `Backend/.env` (gitignored, never entered git history — verified via a scan of the exact file set `git` would commit, plus a check that the secret does not appear in any existing commit). With this resolved, `001_initial_schema.sql` was run, `seed.js` populated all 14 tables, and a full smoke-test pass (login, slip create/edit/delete with stock deduction, the PUT double-restore fix, profit aggregation, chemical usage over-limit rejection) confirmed the entire MSSQL migration (Tasks 1–12) works correctly end-to-end, not just passes static checks. See `TASKS.md` Task 1 for the closing note.
 
 ---
 
@@ -150,3 +150,42 @@
 **What did NOT move:** `Database/`, `Project_detials/`, `frontend_images/`, `images/`, `fontend_images.zip`, and the root-level tracking docs (`ANALYSIS.md`, `EFFORT_ANALYSIS.md`, `PROPOSED_PLAN.md`, `DECISIONS.md`, `TASKS.md`, `FLOW.md`) — these are project documentation/reference assets, not part of the buildable app, and stay at the repo root.
 
 **Known staleness accepted:** file paths referenced inside `ANALYSIS.md`, `EFFORT_ANALYSIS.md`, and `PROPOSED_PLAN.md` (written before this move) still say `Backend/...`/`frontend/app/...` without the `Desktop_app/` prefix. Per this file's own convention (append-only, never rewritten retroactively), those are left as point-in-time snapshots rather than edited — `TASKS.md` and `FLOW.md`, which are living documents, have been updated to the new paths going forward.
+
+---
+
+## 2026-08-13 — Express will be fully removed after IPC is built and smoke-tested, not kept as a dev harness
+
+**Decision:** Resolves the open question logged in the IPC-reversal entry above. Once the Electron IPC architecture (`TASKS.md` Group 5, Tasks 13–15) is built and manually smoke-tested end-to-end through the real IPC path, Express is deleted entirely — not retained as an optional dev-only testability harness. Tracked as the new `TASKS.md` Task 17, gated on Task 15 being done *and* the IPC path being proven working first.
+
+**Why:** User's explicit instruction. This means giving up one of HTTP's few surviving advantages noted in `IPC_VS_HTTP_FINDINGS.md` §3.3 (standalone curl/Postman testability) — a real, acknowledged tradeoff, not an oversight. Consistent with the deployment model that drove the original IPC reversal: this is a single-user, single-machine desktop app with no need for a standalone network-testable API surface once IPC is proven, and keeping Express around indefinitely would mean maintaining two parallel code paths (Express handlers + IPC handlers) for the life of the app rather than one.
+
+**Sequencing, not a shortcut:** Express is explicitly *not* removed early. It stays in place through all of Group 5's build-out as the working, testable reference implementation — the newly MSSQL-migrated SQL logic (Tasks 1–12, already smoke-tested manually: login, stock deduction on slip create/edit, `PUT` double-restore fix, profit aggregation, chemical usage over-limit rejection) needs a known-working way to be exercised while the IPC layer around it is still being built. Removing Express before that would leave no way to verify the SQL logic independently of a half-built IPC layer, making it harder to isolate whether a bug is in the SQL or in the new transport code.
+
+**Alternatives considered:** Keep Express as a permanent dev-only harness (the option `IPC_VS_HTTP_FINDINGS.md` §3.3 flagged as available) — rejected by explicit user instruction; the app ships as IPC-only, and maintaining a second, permanently-unused-in-production transport layer was judged not worth the ongoing maintenance cost for this app's deployment model.
+
+---
+
+## 2026-08-13 — Group 5 build-out: four IPC implementation decisions, quizzed and accepted
+
+**Decision:** Before starting Tasks 13–17, the user was quizzed (multiple-choice, per the standing "quiz before major changes" instruction) on four decisions this group's code depends on, then gave explicit accept. All four:
+
+1. **Packaging tool: `electron-builder`** (not `electron-forge`). Matches what `TASKS.md` Task 16 already assumed and pairs directly with the already-committed `electron-updater` auto-update path (see the "Auto-update deferred" entry above) — `electron-builder` and `electron-updater` are designed to work together; `electron-forge` would need extra glue for the same auto-update flow.
+2. **IPC bridge shape: one explicit `contextBridge`-exposed function per channel**, not the `Proxy`-over-`FEATURES`-registry pattern `IPC_VS_HTTP_FINDINGS.md` §4 recommended. **This reverses that recommendation** — the user chose explicitness (every available call visible directly in `preload.js`, no indirection) over the Proxy pattern's lower boilerplate-as-features-grow benefit. Given this app has a fixed, already-fully-scoped set of ~10 route files' worth of actions (not an open-ended growing API), the boilerplate downside of one-function-per-channel is bounded and known upfront, while the Proxy pattern's main advantage (graceful scaling to new features) matters less here.
+3. **Drop JWT entirely under IPC** — no token issuance/verification layer. Login becomes a plain local username/password check (bcrypt against `Settings`, same as today) that returns success/failure with no token. **Why:** every IPC call already only ever originates from this app's own renderer process inside the OS process boundary — there is no remote/network attacker for a JWT to defend against the way there was for the localhost HTTP server design (which itself was already reversed — see the earlier IPC-vs-HTTP entries). Keeping JWT would mean plumbing a session/user param through every one of Task 13's service functions for a threat that doesn't exist in this architecture.
+4. **Error convention: `{ ok: true, data }` / `{ ok: false, error: { message, code } }` envelope** crossing `ipcMain.handle`, per `IPC_VS_HTTP_FINDINGS.md` §4's original recommendation. **Why:** Electron strips custom properties (like `.code`) off thrown `Error` objects crossing the IPC boundary, silently downgrading to just the `.message` string — an envelope is the only reliable way to carry the structured error info this app's routes already depend on (e.g. `phone_conflict`, insufficient-stock messages) back to the renderer.
+
+**Alternatives considered (and rejected by the user's answers):** `electron-forge` (less proven pairing with the already-committed `electron-updater` auto-update flow); the `Proxy`/`FEATURES`-registry IPC bridge (more indirection than wanted for a bounded, already-known feature set); keeping JWT as IPC-era defense-in-depth (adds a token lifecycle with no real attacker model to defend against, complicates every service function's signature); letting `ipcMain.handle` throw normally and catching only `.message` in the renderer (loses structured error codes needed for flows like the phone-conflict 409).
+
+**Downstream effect on Task 13:** since JWT auth becomes IPC-irrelevant, `requireAuth`/`src/middleware/auth.js` is *not* touched during Task 13–16 — Express keeps its existing JWT-protected behavior unchanged throughout (it's temporary scaffolding per the entry above, not the new architecture). The JWT middleware and `jsonwebtoken` dependency are removed only at Task 17, alongside the rest of Express, per that task's existing scope.
+
+---
+
+## 2026-08-13 — Task 16's SQL Server Express auto-install (`ensureSqlServer.js`) is unverified — flagged, not silently shipped
+
+**Decision:** Implemented `Desktop_app/scripts/ensureSqlServer.js` per the earlier "SQL Server installed via internet download during setup" decision, but explicitly documented — in the file itself, in `TASKS.md`'s Task 16 entry, and here — that it has never been executed against a real Windows machine, because this project's entire development environment is Linux-only (see the "Development environment" entry above). The download URL and silent-install command-line flags are written from Microsoft's own documented reference, not from a tested run.
+
+**Why this is being logged as its own decision rather than just noted in passing:** this is system-level provisioning code (installs software, generates and stores a database password) that will run unattended on a client's real machine. Shipping it silently, without flagging that it's unverified, would misrepresent its actual confidence level — the difference between "written correctly" and "known to work" matters most exactly for code with this much blast radius.
+
+**Mitigation in place:** the script fails safe — if the automated install doesn't work for any reason, `main.js` catches the failure and falls through to `provisionDatabase()`/`connectMSSQL()`, which then fail with a clear, `dialog.showErrorBox`-surfaced error rather than a silent or confusing crash (verified: this exact fallback path was exercised when testing the packaged app with no MSSQL credentials configured — see `TASKS.md` Task 16).
+
+**Required before this ships in a client-facing installer:** a real Windows test of `ensureSqlServer.js` end-to-end — confirm the bootstrap URL still resolves to a current SQL Server Express installer (Microsoft's fwlink targets change over time), confirm the silent-install flags produce a working instance, and confirm the generated `sa` password round-trips correctly through `userData/mssql.env` on a real Windows `userData` path.
