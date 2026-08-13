@@ -1,0 +1,49 @@
+name: Release Windows build
+
+# The entire release procedure is: bump Desktop_app/package.json's version,
+# commit, tag `vX.Y.Z`, push the tag. This workflow does everything after
+# that. See release_pipeline.md §5 for the full cutting-a-release procedure
+# and §4 for the one rule that breaks this silently if skipped (version in
+# package.json must match the tag — the tag only decides *when* to build,
+# not what version ships).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # required — publishing to GitHub Releases 403s without this
+
+jobs:
+  nsis-lint:
+    uses: ./.github/workflows/nsis-lint.yml
+
+  release:
+    needs: nsis-lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+        working-directory: Desktop_app
+
+      - run: npm install
+        working-directory: Desktop_app/Backend
+
+      - run: npm install
+        working-directory: Desktop_app/frontend/app
+
+      - run: npm run release:win
+        working-directory: Desktop_app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder's standard Windows code-signing env vars — it
+          # auto-detects and signs when both are set, no package.json config
+          # needed. CSC_LINK accepts base64-encoded .pfx content directly.
+          # See DECISIONS.md's code-signing entry for how these secrets were
+          # generated and how to rotate them (e.g. swapping in a real
+          # purchased cert later is just updating these two secrets).
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}

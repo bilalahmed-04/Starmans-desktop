@@ -225,3 +225,17 @@ This pattern, GitHub Actions release automation, and `electron-updater` auto-upd
 **Alternatives considered:** Keep `ensureSqlServer.js`'s approach and layer CI/auto-update/signing around it — this was the plan going in, offered explicitly as the lower-effort/lower-installer-size option; rejected by the user in favor of the proven pattern. Smaller installer size (~363MB added for the bundled SQL Server Express vs. install-time download) was accepted as the tradeoff for a pipeline with a real production track record instead of an unverified one.
 
 **Adaptation needed, not a direct copy:** `release_pipeline.md` describes Wentox's own paths (`backend/`, `frontend/`, `Wentox_db`, `SubhanNoor/Wentox_sole`) — every file path, app name, database name, and repo reference needs adapting to this project's actual structure (`Desktop_app/Backend/`, `Desktop_app/frontend/app/`, `starmans` database, `bilalahmed-04/Starmans-desktop`). Implementation is tracked task-by-task in `TASKS.md` rather than as one giant task, following this project's established convention.
+
+---
+
+## 2026-08-13 — Code signing: env-var-based (`CSC_LINK`/`CSC_KEY_PASSWORD`), not `package.json`-embedded
+
+**Decision:** Task 25's self-signed certificate is wired into `electron-builder` via the standard `CSC_LINK`/`CSC_KEY_PASSWORD` environment variables (read from GitHub Actions secrets in CI), rather than `package.json`'s `win.certificateFile`/`certificatePassword` fields as originally scoped in `TASKS.md`.
+
+**Why:** The user's earlier quiz answer ("self-signed cert for now, real cert swap-in is a config change later, not a rewrite") is better satisfied by env vars than by a path in a committed file — swapping to a real purchased certificate later means updating two GitHub secrets, not editing and re-committing `package.json`. A certificate file path baked into `package.json` would also risk that path (or worse, an accidentally-committed certificate) ending up in git history, which env-var-based CI secrets structurally cannot.
+
+**What was generated:** a self-signed 2048-bit RSA certificate with Code Signing EKU, 730-day validity, packaged as a password-protected `.pfx`, stored only in `Desktop_app/build/certs/` (gitignored — confirmed via `git check-ignore` before anything else touched the file) and in this developer's local scratch space, never printed into any chat transcript or log per standard credential handling.
+
+**Not yet done — a manual step outside this session's reach:** the two GitHub repo secrets (`WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`) need to actually be added by someone with admin access to `bilalahmed-04/Starmans-desktop`'s repo settings. Until that happens, `release.yml` will attempt an unsigned build (electron-builder simply skips signing if these env vars are unset — not a hard failure, but not what's wanted for a client-facing release either).
+
+**Alternatives considered:** `package.json`-embedded cert path (the task's original scope) — rejected per the reasoning above. No signing at all — rejected, already decided against in the earlier quiz (self-signed was chosen specifically over "skip signing for now, build unsigned").

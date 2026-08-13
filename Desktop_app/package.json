@@ -13,7 +13,8 @@
     "release:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win --publish always"
   },
   "dependencies": {
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "electron": "^33.4.11",

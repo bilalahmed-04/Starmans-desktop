@@ -62,6 +62,10 @@ declare global {
         annual: (year?: string | number) => Promise<IpcResult>;
         analytics: (month?: string, year?: string | number) => Promise<IpcResult>;
       };
+      updates: {
+        check: () => Promise<IpcResult<{ currentVersion: string; availableVersion: string; updateAvailable: boolean }>>;
+        install: () => Promise<IpcResult<void>>;
+      };
     };
   }
 }

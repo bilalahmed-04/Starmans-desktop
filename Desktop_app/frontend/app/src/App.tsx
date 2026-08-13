@@ -13,6 +13,7 @@ import ExpensesPage from '@/pages/ExpensesPage';
 import ProfitPage from '@/pages/ProfitPage';
 import PaymentPage from '@/pages/PaymentPage';
 import SettingsPage from '@/pages/SettingsPage';
+import CheckForUpdatesPage from '@/pages/CheckForUpdatesPage';
 import './App.css';
 
 export default function App() {
@@ -55,6 +56,9 @@ export default function App() {
 
   // Settings
   if (page === 'settings') return <SettingsPage />;
+
+  // Updates
+  if (page === 'updates') return <CheckForUpdatesPage />;
 
   // Default
   return <NewSalePage />;

@@ -4,13 +4,16 @@
 // "REVISED: adopt a proven bundled-SQL-Server release pipeline" — this
 // replaces the old install-time-download approach in ensureSqlServer.js.
 //
-// *** URL UNVERIFIED — same caveat as the superseded ensureSqlServer.js:
-// Microsoft's fwlink targets change over time and this project's dev
-// environment has never been able to actually run this download+bundle+
-// install cycle on Windows. Confirm this resolves to a real, current
-// SQL Server Express "Basic" package installer (the ~266MB standalone
-// package, not the small web-bootstrapper variant — those are different
-// downloads from Microsoft) before relying on it in a release build. ***
+// URL VERIFIED 2026-08-13: confirmed via a direct HTTP HEAD request to
+// return 200 OK, Content-Type: application/octet-stream, Content-Length:
+// 748772024 bytes (~714MB) — the real offline "Core" SQL Server Express
+// package, not the small web-bootstrapper (the fwlink previously here,
+// go.microsoft.com/fwlink/?linkid=2216019, was tried first and confirmed
+// WRONG — it resolves to SQL2025-SSEI-Expr.exe, a ~4.4MB web installer that
+// needs internet at install time, exactly what this build-time-download
+// approach exists to avoid). Fwlink targets can still be repointed by
+// Microsoft independent of this repo — re-verify with the same curl -IL
+// check if this ever starts failing.
 //
 // Idempotent: skips re-downloading if a sane file is already present.
 // Deletes anything suspiciously small as a truncated/failed download
@@ -19,10 +22,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
 
-const SQL_EXPRESS_URL = 'https://go.microsoft.com/fwlink/?linkid=2216019';
+const SQL_EXPRESS_URL = 'https://download.microsoft.com/download/dea8c210-c44a-4a9d-9d80-0c81578860c5/ENU/SQLEXPR_x64_ENU.exe';
 const OUT_DIR = path.join(__dirname, '..', 'build', 'sqlserver');
 const OUT_FILE = path.join(OUT_DIR, 'SQLEXPR_x64_ENU.exe');
-const MIN_SANE_BYTES = 200 * 1024 * 1024; // 200MB — anything smaller is a truncated/wrong download
+const MIN_SANE_BYTES = 600 * 1024 * 1024; // 600MB — real package is ~714MB; anything smaller is truncated/wrong
 
 function download(url, destPath) {
   return new Promise((resolve, reject) => {
@@ -70,7 +73,7 @@ async function main() {
   if (size < MIN_SANE_BYTES) {
     fs.unlinkSync(OUT_FILE);
     throw new Error(
-      `Downloaded file is only ${(size / 1024 / 1024).toFixed(1)}MB, expected ~266MB — ` +
+      `Downloaded file is only ${(size / 1024 / 1024).toFixed(1)}MB, expected ~714MB — ` +
       `deleted as truncated/wrong. The fwlink URL may have changed; verify it manually.`
     );
   }

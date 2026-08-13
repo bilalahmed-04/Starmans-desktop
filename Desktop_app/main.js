@@ -1,14 +1,33 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 // Dev: Backend/.env (gitignored, developer's local MSSQL creds).
-// Production: userData/mssql.env — written by ensureSqlServer.js after a
-// fresh SQL Server Express install generates a new sa password (see that
-// file's caveats). `override: true` lets a production file win if both
-// somehow exist, which shouldn't normally happen.
+// Production: %ProgramData%\Starmans\app-config.json — written by the NSIS
+// installer's build/setup-sqlserver.ps1 during install/update (the user
+// types the database password once, in the installer UI). This supersedes
+// the old ensureSqlServer.js/userData-mssql.env approach (auto-generated
+// password, installed at first app launch instead of install time) — see
+// DECISIONS.md, "REVISED: adopt a proven bundled-SQL-Server release
+// pipeline".
 require('dotenv').config({ path: path.join(__dirname, 'Backend', '.env') });
-require('dotenv').config({ path: path.join(app.getPath('userData'), 'mssql.env'), override: true });
+loadProductionConfig();
+
+function loadProductionConfig() {
+  // %ProgramData% is a system env var, always set on Windows Vista+; no
+  // NSIS-style "no built-in constant" issue here since this is plain
+  // Node reading `process.env`, not NSIS. Falls through silently in dev
+  // (no config file yet) — Backend/.env above already covers that case.
+  const configPath = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Starmans', 'app-config.json');
+  if (!fs.existsSync(configPath)) return;
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  process.env.MSSQL_SERVER = config.mssqlServer;
+  process.env.MSSQL_PORT = String(config.mssqlPort);
+  process.env.MSSQL_DATABASE = config.mssqlDatabase;
+  process.env.MSSQL_USER = config.mssqlUser;
+  process.env.MSSQL_PASSWORD = config.mssqlPassword;
+}
 
 const BACKEND_SRC = path.join(__dirname, 'Backend', 'src');
 
@@ -61,39 +80,16 @@ function buildMssqlConfig(database) {
   };
 }
 
-function persistGeneratedPassword(saPassword) {
-  const envPath = path.join(app.getPath('userData'), 'mssql.env');
-  const contents = [
-    'MSSQL_SERVER=localhost',
-    'MSSQL_PORT=1433',
-    'MSSQL_DATABASE=starmans',
-    'MSSQL_USER=sa',
-    `MSSQL_PASSWORD=${saPassword}`,
-    'MSSQL_ENCRYPT=true',
-    'MSSQL_TRUST_SERVER_CERTIFICATE=true',
-  ].join('\n');
-  fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(envPath, contents, { mode: 0o600 });
-  process.env.MSSQL_USER = 'sa';
-  process.env.MSSQL_PASSWORD = saPassword;
-}
-
 async function registerIpcHandlers() {
-  const { connectMSSQL, sql } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
+  const { connectMSSQL } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
 
-  // Best-effort — see scripts/ensureSqlServer.js's caveats (unverified on a
-  // real Windows machine). Falls through to provisionDatabase()/connectMSSQL()
-  // either way; if SQL Server truly isn't reachable, those fail with a clear
-  // error surfaced via the dialog in the app.whenReady().catch() below,
-  // rather than this step silently swallowing the problem.
-  try {
-    const { ensureSqlServer } = require('./scripts/ensureSqlServer.js');
-    const generatedPassword = await ensureSqlServer({ sql, config: buildMssqlConfig('master') });
-    if (generatedPassword) persistGeneratedPassword(generatedPassword);
-  } catch (err) {
-    console.error('SQL Server Express auto-install failed (see scripts/ensureSqlServer.js):', err.message);
-  }
-
+  // SQL Server itself, the sa password, and the database are all already
+  // provisioned by this point — by build/setup-sqlserver.ps1 during install,
+  // not by this app at first launch (see loadProductionConfig() above and
+  // DECISIONS.md's pipeline-adoption entry). This step is now purely the
+  // schema/migration check (release_pipeline.md §6 Step 5's "startup
+  // self-sufficiency" — idempotent, safe to run on every launch), not
+  // SQL Server installation.
   const { provisionDatabase } = require('./scripts/provisionDatabase.js');
   await provisionDatabase({
     sql,
@@ -113,6 +109,7 @@ async function registerIpcHandlers() {
   const slips = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'slips.js')));
   const payments = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'payments.js')));
   const profit = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'profit.js')));
+  const updates = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'updates.js')));
 
   // auth:* — no token issuance under IPC (see DECISIONS.md's Group 5 entry:
   // JWT has no network boundary to protect here, this is a same-process call).
@@ -154,6 +151,12 @@ async function registerIpcHandlers() {
   ipcMain.handle('profit:monthly', wrap((month) => profit.getMonthly(month)));
   ipcMain.handle('profit:annual', wrap((year) => profit.getAnnual(year)));
   ipcMain.handle('profit:analytics', wrap((month, year) => profit.getAnalytics(month, year)));
+
+  // updates:* — manual "Check for Updates" only, never automatic/silent.
+  // See Backend/src/services/updates.js for the probe/guard/error-handling
+  // rules this wraps.
+  ipcMain.handle('updates:check', wrap(() => updates.checkForUpdate({ app, autoUpdater })));
+  ipcMain.handle('updates:install', wrap(() => updates.installUpdate({ autoUpdater })));
 }
 
 function createWindow() {

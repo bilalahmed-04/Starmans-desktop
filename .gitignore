@@ -36,5 +36,17 @@ Desktop_app/frontend/app/.env
 # electron-builder output (Task 16)
 Desktop_app/release/
 
-# Downloaded at build time (Task 20) — ~266MB, never committed
+# Downloaded at build time (Task 20) — ~714MB, never committed
 Desktop_app/build/sqlserver/
+
+# Throwaway .exe output from the NSIS lint gate (Task 23) — the lint only
+# cares whether it compiles, not what it produces
+Desktop_app/build/nsis-lint/*.exe
+
+# Code-signing cert (Task 25) — private key material, never committed under
+# any circumstances, self-signed or not. CI gets this from GitHub Secrets.
+# (Setup docs in Desktop_app/build/certs/README.md ARE committed — only
+# the actual key/cert/pfx files are excluded.)
+Desktop_app/build/certs/*.pfx
+Desktop_app/build/certs/*.pem
+Desktop_app/build/certs/*.p12

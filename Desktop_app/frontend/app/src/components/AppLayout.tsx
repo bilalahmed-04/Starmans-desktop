@@ -3,7 +3,7 @@ import { useApp } from '@/context/AppContext';
 import {
   Home as HomeIcon, ShoppingCart, Receipt, Factory, Package, FileText,
   FlaskConical, Calculator, TrendingUp, CreditCard,
-  ChevronDown, LogOut, Lock, Menu, X
+  ChevronDown, LogOut, Lock, Menu, X, RefreshCw
 } from 'lucide-react';
 
 const navItems = [
@@ -180,6 +180,14 @@ export default function AppLayout({ children, pageTitle, headerAction }: AppLayo
               >
                 <Lock size={14} />
                 <span>Change Password</span>
+              </button>
+              <button
+                onClick={() => navigate('updates')}
+                className="flex items-center gap-2 w-full px-3.5 py-3 text-sm transition-colors hover:bg-white/5"
+                style={{ color: 'rgba(250,248,243,0.85)' }}
+              >
+                <RefreshCw size={14} />
+                <span>Check for Updates</span>
               </button>
               <div style={{ borderTop: '1px solid var(--sidebar-sep)' }} />
               <button

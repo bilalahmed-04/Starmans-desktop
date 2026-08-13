@@ -1,0 +1,26 @@
+name: NSIS script lint
+
+# Compile-checks Desktop_app/build/installer.nsh under both electron-builder
+# compile passes (installer + uninstaller) before a Windows build ever runs.
+# See release_pipeline.md §2 Stage 2 and §6 Step 6 for why this exists: a
+# script can compile fine as an installer and fail as an uninstaller (custom
+# Vars/Functions referenced by hooks that only exist in the installer pass),
+# and discovering that partway through a ~3.5 minute Windows job wastes CI
+# time on every attempt.
+#
+# workflow_call: lets release.yml reuse this as a gate rather than duplicating it.
+on:
+  push:
+    branches: [main]
+    paths: ['Desktop_app/build/**', '.github/workflows/nsis-lint.yml']
+  pull_request:
+    paths: ['Desktop_app/build/**']
+  workflow_call:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nsis
+      - run: bash Desktop_app/build/lint-nsis.sh

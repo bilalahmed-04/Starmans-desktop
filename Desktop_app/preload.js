@@ -55,4 +55,8 @@ contextBridge.exposeInMainWorld('api', {
     annual: (year) => ipcRenderer.invoke('profit:annual', year),
     analytics: (month, year) => ipcRenderer.invoke('profit:analytics', month, year),
   },
+  updates: {
+    check: () => ipcRenderer.invoke('updates:check'),
+    install: () => ipcRenderer.invoke('updates:install'),
+  },
 });

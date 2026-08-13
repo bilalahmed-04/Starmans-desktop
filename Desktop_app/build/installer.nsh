@@ -48,6 +48,17 @@
 ;    list that way, and NSIS never has to escape quotes into a command
 ;    string. $PLUGINSDIR is wiped automatically when the installer exits.
 
+; REQUIRED — same compile-ordering reason documented in rule 2's note above:
+; this file is concatenated into the generated script BEFORE electron-builder
+; includes these headers itself, so ${If}/${EndIf} (LogicLib) and ${NSD_*}
+; (nsDialogs) are not yet defined at the point this file is parsed. Confirmed
+; empirically by a real build: `Invalid command: "${If}"` at what was then
+; line 74. Both headers carry their own include guards (!ifndef LOGICLIB /
+; !ifndef NSDIALOGS_INCLUDED), so including them here is a safe no-op when
+; electron-builder includes them again later.
+!include LogicLib.nsh
+!include nsDialogs.nsh
+
 !ifndef BUILD_UNINSTALLER
   Var Dialog
   Var Label

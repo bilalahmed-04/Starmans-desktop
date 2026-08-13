@@ -1,10 +1,13 @@
-// First-run schema provisioning. Runs Backend/migrations/001_initial_schema.sql
-// against MSSQL if the `starmans` database doesn't exist yet — matches
-// PROPOSED_PLAN.md's "creates the database schema on first launch" installer
-// flow. This is the part of Task 16 that's directly testable (Node + the
-// mssql driver + a live MSSQL instance, all available in this dev environment) —
-// unlike ensureSqlServer.js's SQL Server Express install step, which needs a
-// real Windows machine to verify at all.
+// First-run (and every-run — idempotent) schema provisioning. Runs
+// Backend/migrations/001_initial_schema.sql against MSSQL if the `starmans`
+// database doesn't exist yet — release_pipeline.md §6 Step 5's "startup
+// self-sufficiency". SQL Server itself and its sa password are already
+// provisioned by the installer's build/setup-sqlserver.ps1 by the time this
+// runs (see DECISIONS.md's pipeline-adoption entry) — this script only ever
+// deals with the `starmans` database's own schema, nothing at the SQL
+// Server-instance level. This is directly testable in this dev environment
+// (Node + the mssql driver + a live MSSQL instance) — unlike the installer
+// script, which needs a real Windows machine to verify at all.
 const fs = require('node:fs');
 
 // sqlcmd's "GO" batch separator is not real T-SQL — the mssql/tedious driver
