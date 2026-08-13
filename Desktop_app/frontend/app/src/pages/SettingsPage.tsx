@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import AppLayout from '@/components/AppLayout';
 import { updateSettings } from '@/lib/settings';
-import { setToken } from '@/lib/api';
 
 export default function SettingsPage() {
   const { state, dispatch } = useApp();
@@ -29,7 +28,6 @@ export default function SettingsPage() {
         oldPassword: oldPassword || undefined,
         newPassword: newPassword || undefined,
       });
-      setToken(result.token);
       dispatch({ type: 'UPDATE_SETTINGS', settings: { username: result.username } });
       setOldPassword('');
       setNewPassword('');

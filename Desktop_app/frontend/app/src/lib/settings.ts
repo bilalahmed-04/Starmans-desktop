@@ -1,4 +1,4 @@
-import { apiRequest } from '@/lib/api';
+import { callIpc } from '@/lib/api';
 
 export interface UpdateSettingsPayload {
   username: string;
@@ -7,14 +7,9 @@ export interface UpdateSettingsPayload {
 }
 
 export interface UpdateSettingsResponse {
-  message: string;
-  token: string;
   username: string;
 }
 
 export function updateSettings(payload: UpdateSettingsPayload): Promise<UpdateSettingsResponse> {
-  return apiRequest<UpdateSettingsResponse>('/auth/settings', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
+  return callIpc<UpdateSettingsResponse>(window.api.auth.updateSettings(payload));
 }

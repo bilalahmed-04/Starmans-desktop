@@ -1,13 +1,10 @@
-import { apiRequest } from '@/lib/api';
+import { callIpc } from '@/lib/api';
 import type { Bill, BillEntry } from '@/types';
 
 export function getBills(): Promise<Bill[]> {
-  return apiRequest<Bill[]>('/bills');
+  return callIpc<Bill[]>(window.api.bills.list());
 }
 
 export function createBill(date: string, entries: BillEntry[]): Promise<Bill> {
-  return apiRequest<Bill>('/bills', {
-    method: 'POST',
-    body: JSON.stringify({ date, entries }),
-  });
+  return callIpc<Bill>(window.api.bills.create({ date, entries }));
 }

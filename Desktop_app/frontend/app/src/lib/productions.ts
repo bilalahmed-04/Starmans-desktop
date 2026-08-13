@@ -1,13 +1,10 @@
-import { apiRequest } from '@/lib/api';
+import { callIpc } from '@/lib/api';
 import type { Production, ProductionEntry } from '@/types';
 
 export function getProductions(): Promise<Production[]> {
-  return apiRequest<Production[]>('/productions');
+  return callIpc<Production[]>(window.api.productions.list());
 }
 
 export function createProduction(date: string, entries: ProductionEntry[]): Promise<Production> {
-  return apiRequest<Production>('/productions', {
-    method: 'POST',
-    body: JSON.stringify({ date, entries }),
-  });
+  return callIpc<Production>(window.api.productions.create({ date, entries }));
 }

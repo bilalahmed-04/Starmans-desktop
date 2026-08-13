@@ -4,7 +4,6 @@ import type {
   Article, Client, Production, Expense, Bill,
   ChemPurchase, ChemUsage, Payment, Slip
 } from '@/types';
-import { getToken, clearToken, getUsernameFromToken } from '@/lib/api';
 import { getArticles } from '@/lib/articles';
 import { getClients } from '@/lib/slips';
 import { getProductions } from '@/lib/productions';
@@ -17,7 +16,6 @@ import { getPayments } from '@/lib/payments';
 
 interface State {
   isLoggedIn: boolean;
-  token: string | null;
   currentPage: string;
   selectedClientId: string | null;
   selectedSlipId: string | null;
@@ -33,7 +31,7 @@ interface State {
 }
 
 type Action =
-  | { type: 'LOGIN_SUCCESS'; payload: { username: string; token: string } }
+  | { type: 'LOGIN_SUCCESS'; payload: { username: string } }
   | { type: 'LOGOUT' }
   | { type: 'NAVIGATE'; page: string }
   | { type: 'SELECT_CLIENT'; clientId: string }
@@ -48,12 +46,12 @@ type Action =
   | { type: 'SET_PAYMENTS'; payments: Payment[] }
   | { type: 'UPDATE_SETTINGS'; settings: { username: string } };
 
-const existingToken = getToken();
-
+// No persisted session across launches — there's no token to restore, and
+// every launch is a fresh OS process anyway (see DECISIONS.md's Group 5
+// entry on why JWT/session persistence was dropped under IPC).
 const initialState: State = {
-  isLoggedIn: !!existingToken,
-  token: existingToken,
-  currentPage: existingToken ? 'home' : 'login',
+  isLoggedIn: false,
+  currentPage: 'login',
   selectedClientId: null,
   selectedSlipId: null,
   articles: [],
@@ -64,24 +62,22 @@ const initialState: State = {
   chemPurchases: [],
   chemUsage: [],
   payments: [],
-  settings: { username: (existingToken && getUsernameFromToken(existingToken)) || 'admin' },
+  settings: { username: 'admin' },
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'LOGIN_SUCCESS': {
-      const { username, token } = action.payload;
+      const { username } = action.payload;
       return {
         ...state,
         isLoggedIn: true,
-        token,
         currentPage: 'home',
         settings: { ...state.settings, username },
       };
     }
     case 'LOGOUT':
-      clearToken();
-      return { ...state, isLoggedIn: false, token: null, currentPage: 'login' };
+      return { ...state, isLoggedIn: false, currentPage: 'login' };
     case 'NAVIGATE':
       return { ...state, currentPage: action.page };
     case 'SELECT_CLIENT':

@@ -5,7 +5,7 @@ import type { SlipItem } from '@/types';
 import { X, Plus } from 'lucide-react';
 import { createSlip, getClients } from '@/lib/slips';
 import { getArticles } from '@/lib/articles';
-import { ApiError } from '@/lib/api';
+import { IpcError } from '@/lib/api';
 import SearchableSelect from '@/components/SearchableSelect';
 
 function calcItemTotal(item: SlipItem): number {
@@ -158,8 +158,8 @@ export default function NewSalePage() {
       setClientPhone('');
       setClientResolution(null);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && err.body?.error === 'phone_conflict') {
-        setFormError(err.body.message || err.message);
+      if (err instanceof IpcError && err.code === 'phone_conflict') {
+        setFormError(err.message);
       } else {
         setFormError(err instanceof Error ? err.message : 'Failed to confirm sale. Please try again.');
       }

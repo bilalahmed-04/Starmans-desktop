@@ -1,8 +1,8 @@
-import { apiRequest } from '@/lib/api';
+import { callIpc } from '@/lib/api';
 import type { Payment } from '@/types';
 
 export function getPayments(): Promise<Payment[]> {
-  return apiRequest<Payment[]>('/payments');
+  return callIpc<Payment[]>(window.api.payments.list());
 }
 
 export interface CreatePaymentPayload {
@@ -15,8 +15,5 @@ export interface CreatePaymentPayload {
 }
 
 export function createPayment(payload: CreatePaymentPayload): Promise<Payment> {
-  return apiRequest<Payment>('/payments', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return callIpc<Payment>(window.api.payments.create(payload));
 }

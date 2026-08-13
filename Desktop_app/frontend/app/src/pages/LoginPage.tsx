@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { login, setToken } from '@/lib/api';
+import { login } from '@/lib/api';
 import DotField from '@/components/DotField';
 
 export default function LoginPage() {
@@ -19,9 +19,8 @@ export default function LoginPage() {
     }
     setLoading(true);
     try {
-      const { token, username: loggedInUsername } = await login(username, password);
-      setToken(token);
-      dispatch({ type: 'LOGIN_SUCCESS', payload: { username: loggedInUsername, token } });
+      const { username: loggedInUsername } = await login(username, password);
+      dispatch({ type: 'LOGIN_SUCCESS', payload: { username: loggedInUsername } });
     } catch {
       setError('Invalid username or password.');
     } finally {

@@ -1,8 +1,8 @@
-import { apiRequest } from '@/lib/api';
+import { callIpc } from '@/lib/api';
 import type { Client, SlipItem } from '@/types';
 
 export function getClients(): Promise<Client[]> {
-  return apiRequest<Client[]>('/clients');
+  return callIpc<Client[]>(window.api.clients.list());
 }
 
 export interface CreateSlipPayload {
@@ -13,19 +13,13 @@ export interface CreateSlipPayload {
 }
 
 export function createSlip(payload: CreateSlipPayload): Promise<unknown> {
-  return apiRequest('/slips', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return callIpc<unknown>(window.api.slips.create(payload));
 }
 
-export function deleteSlip(id: string): Promise<{ message: string }> {
-  return apiRequest<{ message: string }>(`/slips/${id}`, { method: 'DELETE' });
+export function deleteSlip(id: string): Promise<void> {
+  return callIpc<void>(window.api.slips.delete(id));
 }
 
 export function updateSlip(id: string, items: SlipItem[]): Promise<unknown> {
-  return apiRequest(`/slips/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify({ items }),
-  });
+  return callIpc<unknown>(window.api.slips.update(id, items));
 }
