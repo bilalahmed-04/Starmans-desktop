@@ -35,6 +35,7 @@ export async function getChemSummary() {
 export class InsufficientStockError extends Error {
   constructor(remaining) {
     super(`Usage exceeds remaining stock. Only ${remaining} kg available.`);
+    this.code = 'insufficient_stock';
     this.remaining = remaining;
   }
 }

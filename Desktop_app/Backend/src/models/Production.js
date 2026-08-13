@@ -52,6 +52,7 @@ export async function findProductions({ month, start, end } = {}) {
 export class ArticleNotFoundError extends Error {
   constructor(articleId) {
     super(`Article ${articleId} not found`);
+    this.code = 'article_not_found';
     this.articleId = articleId;
   }
 }

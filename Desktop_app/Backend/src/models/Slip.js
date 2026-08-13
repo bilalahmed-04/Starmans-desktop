@@ -1,10 +1,22 @@
 import { getPool, sql } from '../mssqlDb.js';
 
-export class InsufficientStockError extends Error {}
+export class InsufficientStockError extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 'insufficient_stock';
+  }
+}
 
 export class PhoneConflictError extends Error {
   constructor(existingClient) {
-    super('phone_conflict');
+    // Built here, not in the route/IPC layer — the message only depends on
+    // domain data (existingClient.name), so a single source of truth avoids
+    // the IPC path getting the raw 'phone_conflict' string instead of a
+    // human-readable message (a real bug caught while wiring Task 14/15:
+    // the old Express route reconstructed this message itself, which IPC,
+    // calling the service layer directly, would have silently skipped).
+    super(`This phone number is already registered to "${existingClient.name}".`);
+    this.code = 'phone_conflict';
     this.existingClient = existingClient;
   }
 }
