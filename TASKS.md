@@ -233,6 +233,76 @@ Scaffolded at the same level of detail Groups 2–4 originally were — not deep
 
 ---
 
+## Group 6 — Client-readiness follow-ups (new, added after all 17 original tasks completed)
+
+**Task 18: Produce a Windows installer verification checklist (closes out Task 16's testing gap)** (completed) [assigned: claude, started: 2026-08-13]
+- User asked for the actual Windows-machine verification of Task 16 (build the real `.exe`, install on a clean Windows snapshot, confirm `ensureSqlServer.js` + `provisionDatabase.js` + a full functional smoke test). This session's sandbox has no Windows access.
+- **Ruled out, with evidence, before falling back to a checklist:**
+  - Docker Windows containers — architecturally impossible on a Linux Docker host (Windows containers need a Windows kernel underneath; this isn't a config/permission issue).
+  - Local QEMU/KVM VM — `/dev/kvm` and CPU `vmx` are present, but blocked on three independent fronts: only 7.2GB free disk (`df -h` showed the volume at 96% used) vs. Windows 11's 64GB minimum; host RAM already under pressure (519MB free, swap nearly exhausted); Microsoft's ISO download endpoint returned `403` to this host.
+  - Cross-building the installer itself via the sandbox's installed `wine` was considered (technically possible) but deliberately not done — a Wine-built NSIS installer isn't guaranteed identical to a natively-built one, and the whole point of Task 16's gap is a *real* Windows-verified artifact, not a partially-closed one.
+- Created `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` — full checklist: build the real installer, install on a clean snapshot, verify `ensureSqlServer.js`'s SQL Server Express auto-install (fwlink URL, silent install flags, generated `sa` password persisted to the real Windows `userData` path — never empirically confirmed on Windows before now), verify `provisionDatabase.js`'s schema creation, then the same-depth functional smoke test already done on Linux for Task 17 (login, stock deduction on slip create/edit/delete, profit aggregation cross-checked against raw SQL, chemical usage over-limit rejection).
+- **Found a real blocker while tracing the login path for the checklist, flagged prominently in it — see Task 19.**
+- Depends on: nothing (documentation-only)
+- **Not done — by design:** the checklist itself has not been executed; that still needs someone with real Windows access. This task's deliverable is the checklist, not the verification results themselves — `TASKS.md`/`DECISIONS.md` still need updating with real results once someone runs it (see the checklist's own "Report back" section).
+
+**Task 19: Fix first-run login lockout — fresh installs have no way to create an account** (not_completed)
+- **Confirmed by tracing the code**, not speculation: `Desktop_app/scripts/provisionDatabase.js` only creates the schema — no `Settings` row is ever inserted. `Backend/src/services/auth.js`'s `changeSettings` (the only credential-setting path, wired to IPC channel `auth:updateSettings`) requires an *existing* `Settings` row to verify `oldPassword` against — when `getSettings()` returns `null` (empty table) and a `newPassword` is supplied, `const match = settings && await bcrypt.compare(...)` short-circuits to `null` (falsy), so it throws `"Old password is incorrect"` even though there's nothing to be incorrect about. There is also no first-run/setup screen anywhere in `frontend/app/src` reachable before login (`grep` for `changeSettings`/`firstRun`/`setup` across the frontend returns nothing) — `SettingsPage.tsx` (the only caller of `updateSettings`) is behind the authenticated app shell.
+- **Net effect: a real client installing fresh on Windows and launching the app for the first time cannot log in, ever, through the UI.** Every login smoke test this project has ever done (Linux, both the CDP-driven Task 17 test and every earlier one) only worked because `seed.js` had already inserted a `Settings` row directly via SQL, bypassing this code path entirely — the bug was invisible until someone traced the truly-empty-table case, which only came up while writing Task 18's checklist.
+- **Not fixed yet — this is an architecture/UX decision, not a one-line patch, and the standing quiz-before-major-changes process applies:** at minimum two real approaches exist (auto-seed a default admin row during `provisionDatabase.js`, matching the old `seed.js`'s `admin`/`admin` convention — no frontend changes needed, but ships a known default credential that must be surfaced/forced-changed; vs. a proper first-run setup screen gating the login page until `Settings` is empty — better security/UX, but is real new frontend work). **Frontend work is explicitly out of scope for whoever picks this up in the current session** (parallel theme work is in flight there) — so a frontend-touching fix needs to be sequenced around that, not just this task's own scope.
+- Depends on: a user decision on approach (see above) — do not implement either option without it being quizzed and accepted first, per project convention
+- Blocks: `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md`'s step 5 login checkbox will fail on a truly fresh Windows install until this is fixed (checklist includes a manual `sqlcmd`-insert workaround so the *rest* of the checklist can still be exercised in the meantime)
+
+---
+
+## Group 6 — Release pipeline (bundled SQL Server + GitHub Actions + auto-update + signing)
+
+Supersedes Task 16's `ensureSqlServer.js` approach — see `DECISIONS.md`, "REVISED: adopt a proven bundled-SQL-Server release pipeline". Adapting the pattern documented in `release_pipeline.md` (root of repo, a working reference from a sibling project) to this project's structure. Not exploratory — that doc specifies exact file roles, config, and hard-won gotchas; this group implements it, doesn't redesign it.
+
+**Task 20: electron-builder config + build-time SQL Server download script** (completed) [assigned: claude, started: 2026-08-13]
+- `Desktop_app/package.json`: rewrote `build` config per `release_pipeline.md` §6 Step 1 — `extraResources` for the bundled SQL Server installer + `setup-sqlserver.ps1`, `nsis.include` pointing at `installer.nsh`, `nsis.perMachine: true` + `allowToChangeInstallationDirectory: false` (fixed install folder, matches the reference), `publish` block pointing at the real configured remote (`bilalahmed-04/Starmans-desktop`, confirmed via `git remote -v`)
+- Added `download:sqlserver`, `build:frontend`, `dist:win` (build-only), `release:win` (build + `--publish always`) npm scripts
+- New `Desktop_app/scripts/downloadSqlServer.js` — fetches `SQLEXPR_x64_ENU.exe` at build time (not install time), skips if a sane (≥200MB) file already exists, deletes and errors on anything smaller as a truncated download. **URL unverified, same honesty caveat as the superseded `ensureSqlServer.js`** — this project has never been able to run this on Windows; confirm the fwlink still resolves to the ~266MB standalone package (not the small web-bootstrapper variant, a different download) before relying on it in a real release
+- `.gitignore`: added `Desktop_app/build/sqlserver/` (the downloaded installer, never committed)
+- **Known incomplete state, by design:** `package.json`'s `extraResources`/`nsis.include` now reference `Desktop_app/build/installer.nsh` and `Desktop_app/build/setup-sqlserver.ps1`, which don't exist yet — `electron-builder` will fail if run right now. That's Task 21, next.
+- Verified: `node --check` passes on `downloadSqlServer.js`, `package.json` is valid JSON
+
+**Task 21: NSIS installer script + PowerShell setup script** (completed) [assigned: claude, started: 2026-08-13]
+- New `Desktop_app/build/installer.nsh` — custom wizard page asking for a database password (typed twice) and backup folder; per `release_pipeline.md` §6 Step 3's three hard-won rules (wrap `Var`/`Function` declarations in `!ifndef BUILD_UNINSTALLER`; detect update-vs-fresh-install using *both* a marker of prior install *and* the config file, not either alone; pass the password through a `$PLUGINSDIR` file, never the command line)
+- New `Desktop_app/build/setup-sqlserver.ps1` — idempotent: detect existing SQL Server, install from the bundled package if absent, force mixed-mode auth + TCP/IP on port 1433, set `sa`'s password to what the user typed (via Windows Integrated auth, so this also repairs a machine with a disabled/forgotten `sa`), create the `starmans` database, **verify with a real `sa` connection + query** (not just "the installer returned 0"). Writes `%ProgramData%\Starmans\app-config.json` (machine-wide, parameterized `ConvertTo-Json`, not hand-rolled string escaping) and a full log file. Password argument optional — absent means update path, read the existing config back
+- Uses `$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe` (NSIS runs 32-bit; a bare `powershell.exe` would see the wrong registry view)
+- **Real verification done despite no NSIS compiler/Windows access:** installed `electron-builder`, located its actual bundled NSIS template source in `node_modules/app-builder-lib/templates/nsis/` and cross-checked every macro/define this file uses against it directly — confirmed `customInstall` and `customPageAfterChangeDir` are real, correctly-invoked hooks (`installSection.nsh`/`assistedInstaller.nsh`). **Found and fixed two real bugs this way, not just theoretical risks:** `$COMMONPROGRAMDATA` is not a valid NSIS built-in constant (fixed: `ReadEnvStr` from the `ProgramData` env var instead); and tracing `NsisTarget.js`'s build order found this file's content lands in a "header" that's textually concatenated *before* the section that `!include`s `multiUser.nsh` — meaning a reference to electron-builder's own `${UNINSTALL_REGISTRY_KEY}` define (the obvious choice for the update-detection check) risked being compiled before that define exists. Sidestepped entirely by using a self-owned `HKLM\Software\Starmans\Installed` registry marker instead of any electron-builder-internal define — removes the dependency rather than hoping the ordering works out
+- **Still genuinely unverified:** actual NSIS compilation (no `makensis` available, no sudo to install it) and any real Windows execution. Everything above is as far as static/source-level verification can go without those
+- Depends on: Task 20 (needs the downloaded installer bundled via `extraResources`) — satisfied
+
+**Task 22: Startup self-sufficiency check** (not_completed)
+- Audit `Desktop_app/main.js`/`provisionDatabase.js` against `release_pipeline.md` §6 Step 5 — migrations and seed must run before the window opens, both idempotent, so first launch builds its own schema without any external script
+- This project's `provisionDatabase.js` already does something similar (Task 1/16) — this task is reconciling it with the new user-supplied-password flow (the password now comes from `app-config.json`, written by Task 21's PowerShell script, not auto-generated), not building from scratch
+- **Note:** this task does NOT fix Task 19 (first-run login lockout) — that's the *app's own* admin login (a `Settings` table row), a completely separate credential from the SQL Server `sa` password this task deals with. Don't conflate them.
+- Depends on: Task 21
+
+**Task 23: GitHub Actions workflows** (not_completed)
+- `.github/workflows/nsis-lint.yml` and `.github/workflows/release.yml` per `release_pipeline.md` §6 Step 6, adapted paths/repo (`bilalahmed-04/Starmans-desktop`, confirmed as the actual configured remote)
+- `release.yml` triggers on `v*` tags only, gates on the lint job, runs on `windows-latest`, needs `permissions: contents: write`
+- Depends on: Task 20 (needs `release:win` script to exist), independent of Task 21/22 otherwise
+
+**Task 24: electron-updater + "Check for Updates" page** (not_completed)
+- Add `electron-updater` dependency; wire per `release_pipeline.md` §6 Step 7 — `autoDownload = false` always, probe `api.github.com` specifically before checking (so "GitHub blocked on this network" is a distinct clear error), guard on `app.isPackaged`, don't swallow check errors
+- New frontend page (manual "Check for Updates" button/page, per the user's confirmed answer — NOT automatic-silent-on-launch) — **this is new frontend work; coordinate with whoever else is touching `frontend/app/src/pages/` in parallel (the theme-fix work) to avoid collisions, though this adds a new file rather than editing existing ones, so risk is low**
+- Depends on: Task 23 (needs real published releases to test against — per `release_pipeline.md` §6 Step 8, this cannot be verified any other way)
+
+**Task 25: Code signing (self-signed certificate)** (not_completed)
+- Per the user's confirmed quiz answer: self-signed cert now, real cert swap-in is a config change later, not a rewrite
+- Generate a self-signed code-signing cert, wire into `electron-builder`'s `win.certificateFile`/`certificatePassword` config (same `package.json` block as Task 20 — sequence after Task 20, don't edit that config in parallel)
+- Verify a signed build actually produces a signed `.exe` (Windows file properties → Digital Signatures tab, or `signtool verify`) — needs Windows, same constraint as Task 18/19
+- Depends on: Task 20
+
+**Task 26: Rewrite the Windows verification checklist for the new pipeline** (not_completed)
+- `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` (Task 18's deliverable) verifies the now-superseded `ensureSqlServer.js` approach — needs a full rewrite once Tasks 20–22 land, covering the new NSIS password page, the bundled SQL Server install, and the update flow (Task 24)
+- Depends on: Tasks 20–24 substantially done
+
+---
+
 ## Notes for agents picking up tasks
 
 - Before marking a task `completed`, cross-check whether it involved a new library/architecture decision — if so, it should have gone through the quiz-before-major-changes process (see project memory) and been logged in `DECISIONS.md`.

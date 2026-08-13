@@ -35,3 +35,6 @@ Desktop_app/frontend/app/.env
 
 # electron-builder output (Task 16)
 Desktop_app/release/
+
+# Downloaded at build time (Task 20) — ~266MB, never committed
+Desktop_app/build/sqlserver/

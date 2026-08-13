@@ -142,7 +142,7 @@ export default function PaymentPage() {
 
               {/* Cheque panel */}
               {method === 'Cheque' && (
-                <div className="rounded-lg p-4 mb-4" style={{ background: '#FDFBF7', border: '1px solid #E3D9C6' }}>
+                <div className="rounded-lg p-4 mb-4" style={{ background: 'var(--alt-surface)', border: '1px solid var(--border-color)' }}>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block font-inter font-semibold mb-1" style={{ fontSize: '12px', color: 'var(--dark-heading)' }}>Collection Date</label>

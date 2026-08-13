@@ -468,7 +468,7 @@ export default function NewSalePage() {
             </div>
 
             {phoneConflict && phoneMatch && (
-              <div className="mt-3 rounded-lg p-3" style={{ background: '#FDFBF7', border: '1px solid #E3D9C6' }}>
+              <div className="mt-3 rounded-lg p-3" style={{ background: 'var(--alt-surface)', border: '1px solid var(--border-color)' }}>
                 <p className="font-inter" style={{ fontSize: '12px', color: 'var(--dark-heading)' }}>
                   This phone number is already registered to <strong>{phoneMatch.name}</strong>. Is this the same customer?
                 </p>

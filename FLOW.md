@@ -248,3 +248,21 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Not done:** `ensureSqlServer.js`'s Windows-specific SQL Server Express silent-install path remains unverified — this project's dev environment has never included a Windows machine. This is now the one genuinely open item left in the whole `TASKS.md` board, and it needs a Windows test environment, not more code from here.
 
 **Next:** Test `ensureSqlServer.js` on a real Windows machine before the installer goes anywhere near a client. Otherwise, the desktop app (MSSQL migration + Electron IPC layer) is code-complete and end-to-end verified.
+
+---
+
+### Session — 2026-08-13 (continued again) — Windows verification checklist produced; first-run login lockout bug found
+
+**What changed** (docs only, no application code — user explicitly scoped this session to client-readiness follow-ups, running independently of parallel frontend/theme work; did not touch `frontend/app/src`):
+
+- Checked feasibility of testing Windows locally: Docker Windows containers ruled out (needs a Windows host kernel, not possible on this Linux sandbox); local QEMU/KVM VM ruled out with concrete evidence (`/dev/kvm`/`vmx` present, but only 7.2GB free disk vs. Windows' 64GB minimum, host RAM already under pressure, Microsoft's ISO endpoint returned `403`). Considered and rejected cross-building the installer via the sandbox's `wine` install, since a Wine-built artifact wouldn't be guaranteed representative of a real Windows build.
+- Created `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` — a full checklist (build the real installer, install on a clean Windows snapshot, verify `ensureSqlServer.js` and `provisionDatabase.js`, then a functional smoke test at the same depth as Task 17's Linux CDP test) for the user or whoever has real Windows access to execute.
+- **While tracing the login path to write the checklist's step 5, found a real bug:** a genuinely fresh install (empty `Settings` table) has no way to log in — `provisionDatabase.js` never seeds a `Settings` row, and `changeSettings` (the only credential-setting path) requires an *existing* row to verify `oldPassword` against, so it throws on the empty-table case instead of allowing bootstrap. No first-run setup screen exists in the frontend either. This was invisible in every prior smoke test because `seed.js` always inserted a `Settings` row directly via SQL first, bypassing this code path.
+- `TASKS.md` — added Group 6: Task 18 (this checklist, `completed`) and Task 19 (the login-lockout bug, `not_completed` — needs a user decision on fix approach before implementation, since it's an architecture/UX choice with a frontend-touching option, not a one-line patch)
+- `DECISIONS.md` — added the Docker/local-VM-ruled-out entry with full reasoning
+
+**Why:** User asked for Windows installer verification, auto-update, and code signing as three client-readiness tasks, but scoped this session to Windows verification only (auto-update and code signing explicitly declared "not your work" — being handled elsewhere). Followed the project's quiz-before-major-changes convention by not silently fixing the login-lockout bug once found, since the fix involves a real architecture decision and would need to touch frontend files this session was told to avoid.
+
+**Not done:** the checklist itself has not been executed (needs real Windows access, which this session doesn't have) — `TASKS.md` Task 16 and `DECISIONS.md`'s `ensureSqlServer.js` entry still show "unverified," now with a concrete path to close that gap instead of just a caveat. Task 19 (the login bug) is not fixed — awaiting the user's decision on approach.
+
+**Next:** Get Task 19's fix-approach decision from the user, then implement (backend-only if a default-seeded-admin approach is chosen; needs frontend coordination if a setup-screen approach is chosen instead). Separately, get someone with real Windows access to run `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` and report results back.

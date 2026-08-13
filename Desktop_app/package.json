@@ -6,8 +6,11 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "download:sqlserver": "node scripts/downloadSqlServer.js",
+    "build:frontend": "npm --prefix frontend/app run build",
+    "dist:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win",
+    "release:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win --publish always"
   },
   "dependencies": {
     "dotenv": "^16.6.1"
@@ -33,13 +36,24 @@
       "!Backend/node_modules/.cache",
       "frontend/app/dist/**/*"
     ],
+    "extraResources": [
+      { "from": "build/sqlserver/SQLEXPR_x64_ENU.exe", "to": "sqlserver/SQLEXPR_x64_ENU.exe" },
+      { "from": "build/setup-sqlserver.ps1", "to": "setup-sqlserver.ps1" }
+    ],
     "win": {
       "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "allowToChangeInstallationDirectory": false,
+      "perMachine": true,
+      "include": "build/installer.nsh"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "bilalahmed-04",
+      "repo": "Starmans-desktop",
+      "releaseType": "release"
     }
   }
 }

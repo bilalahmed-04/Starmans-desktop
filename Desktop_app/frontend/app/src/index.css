@@ -21,6 +21,12 @@
     --gold-text: #B08D57;
     --error: #B3401F;
     --success: #3F7D58;
+    --success-tint-bg: #EEF4EF;
+    --success-tint-border: #cfe0d4;
+    --error-tint-bg: #FBF1ED;
+    --error-tint-border: #E8C5B8;
+    --verified-tint-bg: #F0F7F3;
+    --verified-tint-border: #B8DFC9;
     --border-color: #E3E0D8;
     --border-table: #F0EDE6;
     --border-section: #1B2A41;
@@ -62,6 +68,12 @@
     --secondary-text: #7a8fa8;
     --muted-text: #4a6278;
     --dark-heading: #eee8dd;
+    --success-tint-bg: rgba(63, 125, 88, 0.15);
+    --success-tint-border: rgba(63, 125, 88, 0.35);
+    --error-tint-bg: rgba(179, 64, 31, 0.15);
+    --error-tint-border: rgba(179, 64, 31, 0.35);
+    --verified-tint-bg: rgba(63, 125, 88, 0.15);
+    --verified-tint-border: rgba(63, 125, 88, 0.35);
 
     /* dark mode shadcn overrides */
     --background: 216 40% 10%;
@@ -203,7 +215,7 @@
   }
 
   .btn-danger:hover {
-    background: #FBF1ED;
+    background: var(--error-tint-bg);
     border-color: var(--error);
   }
 
@@ -275,15 +287,15 @@
 
   /* Success banner */
   .banner-success {
-    background: #EEF4EF;
-    border: 1px solid #cfe0d4;
+    background: var(--success-tint-bg);
+    border: 1px solid var(--success-tint-border);
     color: var(--success);
   }
 
   /* Error banner */
   .banner-error {
-    background: #FBF1ED;
-    border: 1px solid #E8C5B8;
+    background: var(--error-tint-bg);
+    border: 1px solid var(--error-tint-border);
     color: var(--error);
   }
 
@@ -297,8 +309,8 @@
 
   /* Verified banner */
   .banner-verified {
-    background: #F0F7F3;
-    border: 1px solid #B8DFC9;
+    background: var(--verified-tint-bg);
+    border: 1px solid var(--verified-tint-border);
     color: var(--success);
   }
 
