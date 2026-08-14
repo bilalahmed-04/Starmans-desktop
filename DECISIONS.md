@@ -326,3 +326,25 @@ Notably this class of bug was *introduced* by the previous fix: electron-builder
 **Root-cause fix vs. workaround:** the filename is pinned at the source so the on-disk name, `latest.yml`'s reference, and the uploaded asset are all byte-identical and contain no spaces to normalise. Renaming during upload would have papered over the mismatch while leaving the underlying ambiguity in place.
 
 **Left as-is deliberately:** `productName` keeps its spaces — it's the human-facing name in the Start Menu, installer UI, and window title. Only the *artifact filename* is constrained.
+
+---
+
+## 2026-08-14 — First real Windows test: four bugs fixed, and the logging that made them findable
+
+**Context:** v1.0.3 was installed on a real Windows machine for the first time. The wizard's custom database-password page **worked** — mismatch and length validation both behaved — which closes one of the largest unknowns in this project: that page had only ever been *compiled*, never displayed. Database setup then failed, and produced **no log at all**, which made the failure undiagnosable.
+
+**Bug 1 — the bundled SQL Server installer path was wrong.** `setup-sqlserver.ps1` defaulted `$InstallerPath` to `"$PSScriptRoot\..\sqlserver\SQLEXPR_x64_ENU.exe"`. Both the script and the installer land in `<INSTDIR>\resources\`, so they are siblings — the `..` resolved one level too high. On any machine without SQL Server already present this fails with "Bundled SQL Server installer not found." Verified against the real `win-unpacked` layout rather than reasoned about.
+
+**Bug 2 — the log was written where the tester could not see it (my error, and the expensive one).** The script logged to `$env:TEMP`. The installer runs elevated, so that is the *administrator's* temp — commonly `C:\Windows\Temp` — not the `%TEMP%` the logged-in user opens in Explorer, which is exactly where the instructions sent them. Logs now go to `C:\ProgramData\Starmans\`, the same fixed, machine-wide location as `app-config.json`.
+
+Additionally, NSIS now redirects PowerShell's stdout and stderr to `installer-powershell.log`. A script that dies before its own first log line — bad path, execution policy, parse error, missing .NET type — cannot log that itself; wrapping the interpreter catches what living inside it cannot.
+
+**Bug 3 — `$args` is a PowerShell automatic variable.** `Install-SqlServerExpress` assigned to it. Legal but shadows built-in behaviour and misbehaves under StrictMode. Renamed to `$setupArgs`.
+
+**Bug 4 — dynamic ports would have silently defeated the fixed port.** The script set `TcpPort` to 1433 but left `TcpDynamicPorts` untouched. SQL Server **Express defaults to dynamic ports, and while `TcpDynamicPorts` holds a value it wins over any static `TcpPort`.** The instance would have kept listening on a random high port while setup reported success and the app connected to 1433 and failed. This is the classic Express trap and would have presented as "setup worked, app can't connect" — the hardest kind of bug to attribute. Now cleared explicitly before pinning the port.
+
+**Diagnostics added for the reported "SQL was already installed" theory.** Before changing anything, the script now logs the PowerShell version and bitness, whether the bundled installer exists at the resolved path, **every SQL Server instance already on the machine**, and whether port 1433 is already in use. It also warns explicitly when our instance is absent but others exist — because "SQL Server is installed" and "the instance this app needs exists" are different claims, and a pre-existing default `MSSQLSERVER` instance typically already owns 1433, which is a genuine conflict our named instance cannot resolve by itself.
+
+**Verification performed, given no Windows or PowerShell available locally:** brace/paren balance and every called function resolving to a definition (parsed programmatically, since no interpreter exists here); both NSIS lint passes clean; a full `electron-builder --win` build; and — the meaningful one — **extracting `app-64.7z` out of the built installer and reading the shipped `setup-sqlserver.ps1` directly** to confirm all four fixes are present in the artifact rather than merely in the source tree. The only remaining `..\sqlserver` occurrence was checked and is inside an explanatory comment, not code.
+
+**What this does not establish:** whether the install now succeeds on Windows. Every fix above is reasoned and statically verified, not observed working. The difference between those two matters and is not being glossed: the next Windows run is still the real test — but it will now produce logs regardless of how it fails.

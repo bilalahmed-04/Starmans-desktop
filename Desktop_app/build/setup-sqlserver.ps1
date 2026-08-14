@@ -31,7 +31,13 @@
 param(
     [string]$SaPassword,                      # optional — absent means "update path", read existing config
     [string]$BackupFolder = "$env:USERPROFILE\Documents\Starmans Backup",
-    [string]$InstallerPath = "$PSScriptRoot\..\sqlserver\SQLEXPR_x64_ENU.exe",  # electron-builder extraResources path at runtime
+    # BOTH this script and the bundled SQL Server installer land in
+    # <INSTDIR>\resources\ (electron-builder extraResources), so they are
+    # SIBLINGS — no "..". An earlier "$PSScriptRoot\..\sqlserver\" pointed at
+    # <INSTDIR>\sqlserver\, one level too high, and would have made a
+    # fresh-machine install fail with "Bundled SQL Server installer not
+    # found". Verified against the real win-unpacked layout, not assumed.
+    [string]$InstallerPath = "$PSScriptRoot\sqlserver\SQLEXPR_x64_ENU.exe",
     [string]$InstanceName = "SQLEXPRESS",
     [string]$DatabaseName = "starmans",
     [int]$Port = 1433
@@ -40,7 +46,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $ConfigDir = "$env:ProgramData\Starmans"
 $ConfigPath = "$ConfigDir\app-config.json"
-$LogPath = "$env:TEMP\sqlserver-setup.log"
+
+# Log to a FIXED, machine-wide path — never $env:TEMP. The installer runs
+# elevated, so its %TEMP% is the *administrator's* temp (frequently
+# C:\Windows\Temp), not the %TEMP% the logged-in user sees in Explorer. The
+# v1.0.3 Windows test failed and the log was nowhere the tester could find it,
+# which cost a whole diagnostic round-trip. ProgramData is the same path for
+# every user and is where app-config.json already lives.
+$LogPath = "$ConfigDir\sqlserver-setup.log"
+
+# Create the log directory before anything else can fail, so that even an
+# early error has somewhere to be recorded.
+New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
 
 function Write-Log {
     param([string]$Message)
@@ -80,12 +97,42 @@ function Get-ExistingInstance {
     return $false
 }
 
+# Every SQL Server instance on the box, for the log. Worth capturing because
+# "SQL Server is already installed" and "the instance THIS app needs exists"
+# are different statements: a machine can have a default MSSQLSERVER instance
+# (which typically already owns port 1433) while having no SQLEXPRESS at all.
+# That combination is a real conflict and is invisible without this.
+function Get-InstalledInstances {
+    $regPath = 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL'
+    if (-not (Test-Path $regPath)) { return @() }
+    $p = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
+    if (-not $p) { return @() }
+    return $p.PSObject.Properties |
+        Where-Object { $_.Name -notlike 'PS*' } |
+        ForEach-Object { $_.Name }
+}
+
+# Whether anything is already listening on the port we intend to use. If a
+# pre-existing default instance owns 1433, our named instance cannot also
+# have it, and the failure would otherwise surface as a confusing connection
+# error long after setup claimed success.
+function Test-PortInUse {
+    param([int]$P)
+    try {
+        $listeners = Get-NetTCPConnection -State Listen -LocalPort $P -ErrorAction SilentlyContinue
+        return [bool]$listeners
+    } catch { return $false }
+}
+
 function Install-SqlServerExpress {
     Write-Log "No existing SQL Server instance found — installing SQL Server Express from bundled package."
     if (-not (Test-Path $InstallerPath)) {
         throw "Bundled SQL Server installer not found at $InstallerPath"
     }
-    $args = @(
+    # NOT $args — that's a PowerShell automatic variable (unbound arguments
+    # inside a function). Assigning to it is legal but shadows built-in
+    # behaviour and misbehaves under StrictMode.
+    $setupArgs = @(
         '/ACTION=Install',
         '/IACCEPTSQLSERVERLICENSETERMS',
         '/QUIET',
@@ -95,7 +142,7 @@ function Install-SqlServerExpress {
         '/SQLSYSADMINACCOUNTS=BUILTIN\Administrators',
         '/TCPENABLED=1'
     )
-    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
     if ($proc.ExitCode -ne 0) {
         throw "SQL Server Express installer exited with code $($proc.ExitCode) — see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
     }
@@ -111,7 +158,13 @@ function Set-SqlServerConfig {
 
     # Mixed-mode auth: registry value under the instance's MSSQLServer key.
     $instanceIdPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL"
-    $instanceId = (Get-ItemProperty -Path $instanceIdPath).$InstanceName
+    $instanceId = (Get-ItemProperty -Path $instanceIdPath -ErrorAction SilentlyContinue).$InstanceName
+    if (-not $instanceId) {
+        # Without this guard the path below silently becomes
+        # "...\Microsoft SQL Server\\MSSQLServer" and fails with an obscure
+        # registry error instead of naming the actual problem.
+        throw "Instance '$InstanceName' is not registered even after setup. Instances present: $((Get-InstalledInstances) -join ', ')"
+    }
     $loginModePath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instanceId\MSSQLServer"
     Set-ItemProperty -Path $loginModePath -Name LoginMode -Value 2  # 2 = Mixed Mode
 
@@ -126,9 +179,26 @@ function Set-SqlServerConfig {
             Where-Object { $_.InstanceName -eq $InstanceName -and $_.ProtocolName -eq 'Tcp' }
         if ($tcp) {
             $tcp.SetEnable() | Out-Null
-            $ipAll = Get-WmiObject -Namespace $ns -Class ServerNetworkProtocolProperty -ErrorAction SilentlyContinue |
-                Where-Object { $_.InstanceName -eq $InstanceName -and $_.IPAddressName -eq 'IPAll' -and $_.PropertyName -eq 'TcpPort' }
-            if ($ipAll) { $ipAll.SetStringValue("$Port") | Out-Null }
+            $props = Get-WmiObject -Namespace $ns -Class ServerNetworkProtocolProperty -ErrorAction SilentlyContinue |
+                Where-Object { $_.InstanceName -eq $InstanceName -and $_.IPAddressName -eq 'IPAll' }
+
+            # Setting TcpPort alone is NOT enough, and this is the classic
+            # SQL Server Express trap: Express defaults to DYNAMIC ports, and
+            # while TcpDynamicPorts holds a value it WINS over any static
+            # TcpPort. The instance would keep listening on a random high
+            # port while this script reported success and the app connected
+            # to 1433 and failed. Clearing it is what actually pins the port.
+            $dynamic = $props | Where-Object { $_.PropertyName -eq 'TcpDynamicPorts' }
+            if ($dynamic) {
+                $dynamic.SetStringValue("") | Out-Null
+                Write-Log "Cleared TcpDynamicPorts (was '$($dynamic.PropertyStrVal)') so the static port takes effect."
+            }
+
+            $static = $props | Where-Object { $_.PropertyName -eq 'TcpPort' }
+            if ($static) {
+                $static.SetStringValue("$Port") | Out-Null
+                Write-Log "Pinned TcpPort to $Port."
+            }
         }
     } else {
         Write-Log "WARNING: could not locate SQL Server Configuration Manager WMI namespace — TCP/IP config may need manual verification."
@@ -213,8 +283,30 @@ try {
         }
     }
 
+    # Environment snapshot BEFORE changing anything. Cheap to capture and it
+    # is the difference between a diagnosable failure report and a guess.
+    Write-Log "PowerShell: $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition)), 64-bit process: $([Environment]::Is64BitProcess)"
+    Write-Log "Bundled installer path: $InstallerPath (exists: $(Test-Path $InstallerPath))"
+    $allInstances = Get-InstalledInstances
+    if ($allInstances.Count -gt 0) {
+        Write-Log "SQL Server instances already on this machine: $($allInstances -join ', ')"
+    } else {
+        Write-Log "No SQL Server instances found on this machine."
+    }
+    Write-Log "Port $Port already in use before setup: $(Test-PortInUse -P $Port)"
+
     $hasInstance = Get-ExistingInstance
     if (-not $hasInstance) {
+        # Flag the specific conflict that "SQL is already installed" usually
+        # means in practice: some OTHER instance exists (commonly the default
+        # MSSQLSERVER), which typically already owns port 1433. Installing our
+        # named instance alongside it is fine, but both cannot have the port.
+        if ($allInstances.Count -gt 0) {
+            Write-Log "NOTE: instance '$InstanceName' is absent but other instances exist ($($allInstances -join ', ')). Installing '$InstanceName' alongside them."
+            if (Test-PortInUse -P $Port) {
+                Write-Log "WARNING: port $Port is already in use, most likely by one of those instances. '$InstanceName' cannot also listen on it, and this setup will probably fail verification at the end."
+            }
+        }
         Install-SqlServerExpress
     } else {
         Write-Log "Existing SQL Server instance '$InstanceName' found — repairing/verifying configuration instead of installing."

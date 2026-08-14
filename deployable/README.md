@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.3.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.4.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -47,15 +47,26 @@ Two different passwords are involved, which is easy to confuse:
 
 ## If the install fails
 
-The setup script logs every step. Grab this file:
+Two log files, both in the same fixed folder:
 
 ```
-%TEMP%\sqlserver-setup.log
+C:\ProgramData\Starmans\sqlserver-setup.log      ← what the setup script did
+C:\ProgramData\Starmans\installer-powershell.log ← raw output, incl. crashes
 ```
 
-(Paste `%TEMP%` into Explorer's address bar to get there.) That log plus the exact text of any error dialog is enough to diagnose almost anything that can go wrong here.
+(Paste `C:\ProgramData\Starmans` into Explorer's address bar — the folder is
+normally hidden.) Send both, plus the exact text of any error dialog.
 
-The app itself still installs even if database setup fails — so you may see the app launch but fail to connect. That's the same problem; the log is still the place to look.
+The second file exists because the first can't record a failure that happens
+*before* the script starts. Together they cover every case.
+
+> **Note for anyone following older instructions:** earlier versions logged to
+> `%TEMP%`, which was a mistake — the installer runs elevated, so its `%TEMP%`
+> is the *administrator's*, not yours, and the log appeared to be missing
+> entirely. Fixed in 1.0.4.
+
+The app still installs even if database setup fails — so it may launch and then
+fail to connect. Same root cause; the logs above are still where to look.
 
 ## Known limitations of this specific build
 
@@ -73,14 +84,29 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.3
-- **Signed:** Yes — built and signed by CI (`signtool.exe` with the project
-  certificate). It's a *self-signed* certificate, so SmartScreen still warns on
-  first run; that's expected and covered under "Installing" above.
-- **Downloaded from:** the GitHub Release, so this is byte-identical to what
-  the auto-updater serves.
+- **App version:** 1.0.4
+- **Signed:** No — this copy is built locally, and the Linux signing tool can't
+  run here. The equivalent build published to GitHub Releases *is* signed
+  (CI runs `signtool.exe`), so prefer the release download if you want the
+  signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
+  regardless — see "Installing" above.
 
-Earlier versions (1.0.0–1.0.2) were never usable releases — their builds either
-published no installer or produced an update feed pointing at a missing file.
-See `DECISIONS.md` for what went wrong and how it was fixed. 1.0.3 is the first
-release with a verified installer and a working update feed.
+### What changed in 1.0.4
+
+Fixes for two bugs found during the first real Windows test:
+
+- **The bundled SQL Server installer couldn't be found.** The setup script
+  looked one directory too high, so on a machine without SQL Server already
+  present the install would fail. Verified against the real packaged layout.
+- **The log file was written somewhere you couldn't see it** (the elevated
+  installer's `%TEMP%`), which is why the first test produced no log at all.
+
+Plus two latent issues found while reviewing that code: SQL Server Express
+defaults to *dynamic* ports, which silently override the fixed port 1433 the
+app connects to; and the script now records what SQL Server instances already
+exist and whether port 1433 is taken, so a "SQL is already installed" conflict
+is visible in the log instead of being guesswork.
+
+1.0.0–1.0.3 were not usable releases — their builds either published no
+installer at all or produced an update feed pointing at a missing file. See
+`DECISIONS.md` for the full history.

@@ -46,15 +46,17 @@ on real Windows before — every box is a genuine unknown, not a formality.
 
 ## If something fails
 
-Capture both of these before doing anything else:
+Capture all three before doing anything else:
 
-1. `%TEMP%\sqlserver-setup.log` — the full step-by-step log from the setup script
-2. The exact text of any error dialog
+1. `C:\ProgramData\Starmans\sqlserver-setup.log` — step-by-step log from the setup script
+2. `C:\ProgramData\Starmans\installer-powershell.log` — raw PowerShell output, which
+   captures failures that happen *before* the script can log anything itself
+3. The exact text of any error dialog
 
-Those two are usually enough to pinpoint the failure without a second test run.
+Together these are usually enough to pinpoint the failure without a second test run.
 
 ## Most likely failure points, in order
 
 1. **SQL Server Express silent install** — the single riskiest step; never run outside a Linux dev box
-2. **The custom NSIS wizard page** — compiles correctly, but has never been *displayed* on Windows
+2. **A pre-existing SQL Server instance** — if the machine already has one (especially a default `MSSQLSERVER` instance), it usually already owns port 1433, which this app's instance also needs. The log now reports existing instances and whether the port is taken.
 3. **`app-config.json` path/permissions** — written to `%ProgramData%` by an elevated process; if the app can't read it back, login fails with a database error

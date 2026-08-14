@@ -183,18 +183,27 @@
     StrCpy $6 "powershell.exe"
   ${EndIf}
 
+  ; Everything PowerShell writes (stdout AND stderr) is redirected to a file
+  ; in ProgramData. The v1.0.3 Windows test produced NO log at all, which made
+  ; the failure undiagnosable — if the script dies before its own first log
+  ; line (bad path, execution policy, a parse error, a missing .NET type) it
+  ; can never log that itself. cmd's redirection captures those cases because
+  ; it wraps the interpreter rather than living inside it.
+  ReadEnvStr $9 "ProgramData"
+  CreateDirectory "$9\Starmans"
+
   ${If} $IsUpdateInstall == "1"
     ; Update path: no password argument — the script reads it back from
     ; the existing app-config.json itself.
-    ExecWait '"$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1"' $7
+    ExecWait '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" > "$9\Starmans\installer-powershell.log" 2>&1"' $7
   ${Else}
     FileOpen $4 "$PLUGINSDIR\db_password.txt" r
     FileRead $4 $8
     FileClose $4
-    ExecWait '"$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" -SaPassword "$8" -BackupFolder "$BackupFolder"' $7
+    ExecWait '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" -SaPassword "$8" -BackupFolder "$BackupFolder" > "$9\Starmans\installer-powershell.log" 2>&1"' $7
   ${EndIf}
 
   ${If} $7 != 0
-    MessageBox MB_ICONSTOP "Database setup did not complete (exit code $7). Starmans is installed, but you'll need to fix this before it can connect to its database. See %TEMP%\sqlserver-setup.log for details."
+    MessageBox MB_ICONSTOP "Database setup did not complete (exit code $7).$\r$\n$\r$\nStarmans is installed but cannot reach its database yet.$\r$\n$\r$\nTwo log files in C:\ProgramData\Starmans explain why:$\r$\n  installer-powershell.log$\r$\n  sqlserver-setup.log"
   ${EndIf}
 !macroend
