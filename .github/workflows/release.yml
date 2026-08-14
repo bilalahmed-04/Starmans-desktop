@@ -86,9 +86,9 @@ jobs:
         run: |
           set -euo pipefail
           ls -la
-          test -f "Starmans Sole House Setup ${{ steps.ver.outputs.version }}.exe" || { echo "::error::installer .exe missing"; exit 1; }
+          test -f "Starmans-Sole-House-Setup-${{ steps.ver.outputs.version }}.exe" || { echo "::error::installer .exe missing"; exit 1; }
           test -f latest.yml || { echo "::error::latest.yml missing — auto-update would silently break"; exit 1; }
-          test -f "Starmans Sole House Setup ${{ steps.ver.outputs.version }}.exe.blockmap" || { echo "::error::blockmap missing"; exit 1; }
+          test -f "Starmans-Sole-House-Setup-${{ steps.ver.outputs.version }}.exe.blockmap" || { echo "::error::blockmap missing"; exit 1; }
 
       # One release, created explicitly, before any upload — no race possible.
       - name: Create GitHub Release
@@ -116,8 +116,8 @@ jobs:
           set -euo pipefail
           V="${{ steps.ver.outputs.version }}"
           gh release upload "${GITHUB_REF_NAME}" \
-            "Starmans Sole House Setup ${V}.exe" \
-            "Starmans Sole House Setup ${V}.exe.blockmap" \
+            "Starmans-Sole-House-Setup-${V}.exe" \
+            "Starmans-Sole-House-Setup-${V}.exe.blockmap" \
             latest.yml \
             --clobber
 
@@ -134,3 +134,28 @@ jobs:
           COUNT=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '[.assets[] | select(.state=="uploaded")] | length')
           echo "uploaded assets: $COUNT"
           test "$COUNT" -ge 3 || { echo "::error::expected 3 uploaded assets, got $COUNT"; exit 1; }
+
+      # The check that actually matters, and the one whose absence let v1.0.1
+      # ship broken: assets being *present* is not the same as auto-update
+      # *working*. In v1.0.1 all three uploaded fine, but latest.yml named
+      # `Starmans-Sole-House-Setup-1.0.1.exe` while the asset had been stored
+      # as `Starmans.Sole.House.Setup.1.0.1.exe` — GitHub and electron-builder
+      # normalise spaces differently — so every client's updater would have
+      # requested a URL that 404s. Fixed at the root via `artifactName` (no
+      # spaces), but verified here too: parse the filename electron-updater
+      # will actually request out of latest.yml, and fetch it anonymously,
+      # exactly as a client would.
+      - name: Verify the update feed resolves to a real download
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEED="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/latest.yml"
+          echo "feed: $FEED"
+          curl -fsSL "$FEED" -o /tmp/latest.yml
+          cat /tmp/latest.yml
+          NAME=$(grep -E '^path:' /tmp/latest.yml | sed 's/^path:[[:space:]]*//' | tr -d '\r')
+          echo "latest.yml points at: $NAME"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${NAME}"
+          CODE=$(curl -sIL -o /dev/null -w '%{http_code}' "$URL")
+          echo "HTTP $CODE for $URL"
+          test "$CODE" = "200" || { echo "::error::latest.yml points at $NAME which does not resolve (HTTP $CODE) — auto-update would fail for every client"; exit 1; }

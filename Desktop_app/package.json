@@ -1,6 +1,6 @@
 {
   "name": "starmans-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Starmans Sole House \u2014 Electron desktop app (main process + IPC layer wrapping Backend/ and frontend/app/)",
   "private": true,
   "main": "main.js",
@@ -23,6 +23,8 @@
   "build": {
     "appId": "com.starmans.desktop",
     "productName": "Starmans Sole House",
+    "_artifactName_comment": "MUST contain no spaces. productName has spaces, and a spaced filename gets normalised differently by different tools: electron-builder writes hyphens into latest.yml, while GitHub's upload API turns them into dots. That mismatch shipped in v1.0.1 - latest.yml pointed at a URL that 404'd, so every client's update check would have failed. Pinning a hyphenated name here makes the on-disk file, latest.yml, and the uploaded asset all agree.",
+    "artifactName": "Starmans-Sole-House-Setup-${version}.${ext}",
     "directories": {
       "output": "release"
     },

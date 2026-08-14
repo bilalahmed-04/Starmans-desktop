@@ -305,3 +305,24 @@ The critical property here is not that it failed but that **it failed silently a
 Public repo + working asset upload means the update path is now genuinely functional end to end, rather than a feature that would have failed on first use at a client site.
 
 **Consequence to be aware of:** the source is now publicly readable. Nothing in the repository contains credentials (`.env`, the `.pfx`, and the base64 cert are all gitignored, and this was re-verified against the full git history before each push), but the code, the schema, and this decision log are all now public.
+
+---
+
+## 2026-08-14 — Pin a space-free `artifactName`; verify the update feed resolves, not just that assets exist
+
+**Decision:** `Desktop_app/package.json` pins `"artifactName": "Starmans-Sole-House-Setup-${version}.${ext}"`, and the release workflow gained a final step that fetches `latest.yml` from the published release and confirms the filename it names actually returns HTTP 200.
+
+**Why — v1.0.1 published successfully and auto-update was still broken.** All three assets uploaded, every existing check passed, the release page looked correct. But `productName` contains spaces, and the on-disk artifact was `Starmans Sole House Setup 1.0.1.exe`. Two tools then normalised that filename **differently**:
+
+- electron-builder wrote `Starmans-Sole-House-Setup-1.0.1.exe` (hyphens) into `latest.yml`
+- GitHub's asset upload stored it as `Starmans.Sole.House.Setup.1.0.1.exe` (dots)
+
+Verified concretely rather than assumed — the URL `latest.yml` points at returns **404**, while the dotted URL returns **200**. Every client's update check would have failed on a file-not-found.
+
+**The deeper lesson, which is why a second check was added rather than just the fix:** the previous entry's verification proved *assets were present*. Presence is not function. This bug lived entirely in the gap between "three files uploaded" and "the updater can actually fetch what the manifest names." The new step closes that gap by doing exactly what a client does — parse `path:` out of `latest.yml`, fetch it anonymously, assert 200.
+
+Notably this class of bug was *introduced* by the previous fix: electron-builder's own publisher normalised both sides consistently, so it never mismatched. Moving uploads to `gh` was still correct (it fixed a silent race that shipped no installer at all), but it changed who names the asset — and that side effect wasn't obvious until tested end to end.
+
+**Root-cause fix vs. workaround:** the filename is pinned at the source so the on-disk name, `latest.yml`'s reference, and the uploaded asset are all byte-identical and contain no spaces to normalise. Renaming during upload would have papered over the mismatch while leaving the underlying ambiguity in place.
+
+**Left as-is deliberately:** `productName` keeps its spaces — it's the human-facing name in the Start Menu, installer UI, and window title. Only the *artifact filename* is constrained.
