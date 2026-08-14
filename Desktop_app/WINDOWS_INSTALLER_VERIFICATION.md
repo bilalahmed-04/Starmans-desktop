@@ -14,16 +14,15 @@
 > (insufficient free disk/RAM in this project's dev sandbox) were viable there —
 > see `DECISIONS.md`'s "Windows verification: Docker/local VM ruled out" entry.
 
-**Known blocker before you start — read this first:** a genuinely fresh install
-(empty `Settings` table) currently has **no way to log in at all** — see
-`TASKS.md` Task 19, still open. Every login smoke test so far in this project's
-history worked only because `seed.js` had already inserted a `Settings` row
-directly via SQL. Until Task 19 is fixed, step 6 below will fail at the login
-checkbox no matter what Windows does correctly. Either wait for Task 19 to land
-first, or — purely to keep testing everything *except* login — manually insert a
-`Settings` row via `sqlcmd` after step 5 (bcrypt-hash a test password first;
-don't invent a shortcut that bypasses the real hash path, or step 6's login test
-proves nothing).
+**First-run login (previously a blocker, now fixed — Task 19):** a fresh install
+seeds a default `admin`/`admin` account at startup, and the login screen shows a
+banner naming those credentials and telling the operator to change them. So
+step 6's login check should now pass on a genuinely clean machine with no manual
+`sqlcmd` insert. Two things worth checking specifically while you're there:
+the banner **appears** on first login, and it **disappears** after you change the
+password (it compares the stored hash, so it should switch off by itself). See
+`DECISIONS.md` for why a seeded default was chosen over a first-run setup screen,
+and the security tradeoff that choice accepts.
 
 ---
 
@@ -96,7 +95,9 @@ Unchanged from the previous pipeline — this part only deals with the `starmans
 
 Same depth as the Linux CDP-driven test already done for `TASKS.md` Task 17 — not just "it didn't crash."
 
-- [ ] **Login** — see the blocker note at the top of this file
+- [ ] **Login** with `admin`/`admin` (seeded automatically — see the first-run note at the top)
+- [ ] The default-credentials banner is visible on the login screen before you sign in
+- [ ] Change the password from the account menu, sign out, and confirm the banner is now **gone**
 - [ ] **Create/confirm an article**, note its stock quantity
 - [ ] **Create a slip** against it — confirm stock decreases by the exact quantity (record before/after numbers)
 - [ ] **Edit the slip's quantity** — confirm the delta is applied correctly (exercises the fixed double-restore-on-edit bug, see `TASKS.md` Task 9)

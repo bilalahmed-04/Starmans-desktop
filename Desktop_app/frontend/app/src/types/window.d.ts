@@ -16,6 +16,7 @@ declare global {
       auth: {
         login: (username: string, password: string) => Promise<IpcResult>;
         updateSettings: (payload: unknown) => Promise<IpcResult>;
+        isUsingDefaultCredentials: () => Promise<IpcResult<boolean>>;
       };
       articles: {
         list: (filter?: unknown) => Promise<IpcResult>;

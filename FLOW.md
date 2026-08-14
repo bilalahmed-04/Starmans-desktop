@@ -305,3 +305,23 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Signing: attempted for real, failed on an environment limit, config proven correct.** Re-ran the build with `CSC_LINK`/`CSC_KEY_PASSWORD` actually set. electron-builder picked both up and invoked its signing tool with the right cert and arguments — then its bundled Linux `osslsigncode` died on `libcrypto.so.1.1` (built against OpenSSL 1.1; this system has 3.0.13; installing the old lib needs root). So the signing *configuration* is exercised and correct; only the Linux shim is unusable here. CI's `windows-latest` runner uses native `signtool.exe` and won't hit this. Separately confirmed the current artifact is genuinely unsigned by parsing its PE certificate-table entry (RVA 0, size 0) rather than assuming. Also noted: electron-builder prints the PFX password in plaintext on signing failure — that local log was deleted immediately.
 
 **Still genuinely unverified, and no amount of Linux work can change it:** whether the installer, when actually run on Windows, installs SQL Server, sets the `sa` password, writes `app-config.json`, repairs a broken instance, and whether the app then launches and works. Compilation correctness is not runtime correctness. That's what `WINDOWS_INSTALLER_VERIFICATION.md` is for.
+
+---
+
+### Session — 2026-08-14 — Task 19 fixed: fresh installs can now log in
+
+**What changed:**
+- `Desktop_app/Backend/src/services/auth.js` — added `ensureDefaultAdmin()` (idempotent; inserts a default `admin`/`admin` row **only** when `Settings` is completely empty, so it is safe on every launch and can never clobber a real password) and `isUsingDefaultCredentials()` (compares the stored bcrypt hash rather than reading a flag, so it self-clears once the password is genuinely changed)
+- `Desktop_app/main.js` — calls `ensureDefaultAdmin()` after `connectMSSQL()` (needs the `starmans` pool) and after `provisionDatabase()` (needs the table to exist); registered the `auth:isUsingDefaultCredentials` IPC channel
+- `Desktop_app/preload.js`, `frontend/app/src/types/window.d.ts` — exposed the new channel
+- `frontend/app/src/pages/LoginPage.tsx` — banner naming the default credentials and instructing the operator to change them, shown only while the defaults are still in use
+- `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` — replaced the "known blocker, login cannot pass" warning with the now-working first-run behaviour, and added two new checkboxes (banner appears on first run; banner disappears after a password change)
+- `TASKS.md` Task 19 → `completed`; `DECISIONS.md` — new entry recording the approach, the accepted security tradeoff, and what would justify revisiting it
+
+**Why:** Task 19 was the last thing genuinely blocking a client-shippable build — a fresh install had no path to create the first account (both `verifyCredentials` and `changeSettings` reject on an empty `Settings` table), so a client on a clean Windows machine could never have logged in. The owner chose the seeded-default approach over a first-run setup screen via the standing quiz process, accepting the known-credential tradeoff; the login banner is the mitigation for that choice.
+
+**Verified against a real database, on the exact broken scenario** — not just `node --check`. Used a throwaway `starmans_task19_scratch` database (live data never touched) and confirmed six behaviours in sequence: the bug reproduces on an empty table (both auth paths fail); `ensureDefaultAdmin()` fixes it and login succeeds; the warning flag reports `true`; a second call is a no-op with the row count still 1; after a real password change the flag flips to `false`; and the changed password survives a re-seed while the old default stops working. Scratch DB dropped, live DB confirmed unaffected (`ensureDefaultAdmin()` against it correctly returns `created: false`). Frontend `npm run build` passes clean.
+
+**Worth recording as a process note:** an initial attempt to test this by emptying the **live** `Settings` table was blocked as unsafe, and that was the right call — the script's failure path would not have restored the row. The scratch-database pattern used instead is strictly better and is what to reuse for any future destructive-state test.
+
+**Not done:** the built `.exe` in `Desktop_app/release/` predates this fix — it needs rebuilding before it's handed to anyone, or the login lockout is still present in that artifact.

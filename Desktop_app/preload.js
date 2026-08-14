@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   auth: {
     login: (username, password) => ipcRenderer.invoke('auth:login', username, password),
     updateSettings: (payload) => ipcRenderer.invoke('auth:updateSettings', payload),
+    isUsingDefaultCredentials: () => ipcRenderer.invoke('auth:isUsingDefaultCredentials'),
   },
   articles: {
     list: (filter) => ipcRenderer.invoke('articles:list', filter),

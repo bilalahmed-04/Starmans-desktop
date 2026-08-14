@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { login } from '@/lib/api';
 import DotField from '@/components/DotField';
@@ -9,6 +9,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [usingDefaults, setUsingDefaults] = useState(false);
+
+  // A fresh install is seeded with admin/admin (see TASKS.md Task 19 — chosen
+  // over a first-run setup screen). Nothing forces a change, so the least this
+  // screen can do is tell the operator the credentials exist and should be
+  // changed. The check is hash-based, so this banner disappears by itself the
+  // moment the password is actually changed.
+  useEffect(() => {
+    window.api.auth.isUsingDefaultCredentials()
+      .then(res => setUsingDefaults(res.ok && res.data === true))
+      .catch(() => setUsingDefaults(false)); // never block login on this check
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -136,6 +148,13 @@ export default function LoginPage() {
           <p className="mt-1 font-inter" style={{ color: 'var(--secondary-text)', fontSize: '14px' }}>
             Sign in to manage sales and stock.
           </p>
+
+          {usingDefaults && (
+            <div className="banner-info rounded-lg px-3 py-2.5 text-sm mt-4">
+              <strong>First time here?</strong> Sign in with <strong>admin</strong> / <strong>admin</strong>,
+              then change your password right away from the account menu.
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="mt-6 flex flex-col gap-4">
             <div>

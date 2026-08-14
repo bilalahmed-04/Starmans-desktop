@@ -111,10 +111,18 @@ async function registerIpcHandlers() {
   const profit = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'profit.js')));
   const updates = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'updates.js')));
 
+  // A fresh install has an empty Settings table and no UI path to create the
+  // first account, so seed one here (idempotent — never touches an existing
+  // row). Runs after connectMSSQL() because it needs the `starmans` pool, and
+  // after provisionDatabase() because the table has to exist first.
+  // See TASKS.md Task 19.
+  await auth.ensureDefaultAdmin();
+
   // auth:* — no token issuance under IPC (see DECISIONS.md's Group 5 entry:
   // JWT has no network boundary to protect here, this is a same-process call).
   ipcMain.handle('auth:login', wrap((username, password) => auth.verifyCredentials(username, password)));
   ipcMain.handle('auth:updateSettings', wrap((payload) => auth.changeSettings(payload)));
+  ipcMain.handle('auth:isUsingDefaultCredentials', wrap(() => auth.isUsingDefaultCredentials()));
 
   ipcMain.handle('articles:list', wrap((filter) => articles.listArticles(filter)));
   ipcMain.handle('articles:create', wrap((data) => articles.addArticle(data)));
