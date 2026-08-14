@@ -325,3 +325,24 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Worth recording as a process note:** an initial attempt to test this by emptying the **live** `Settings` table was blocked as unsafe, and that was the right call — the script's failure path would not have restored the row. The scratch-database pattern used instead is strictly better and is what to reuse for any future destructive-state test.
 
 **Not done:** the built `.exe` in `Desktop_app/release/` predates this fix — it needs rebuilding before it's handed to anyone, or the login lockout is still present in that artifact.
+
+---
+
+### Session — 2026-08-14 (continued) — Release pipeline actually works; three real bugs found by testing it
+
+**Context:** `v1.0.0` had reported success while publishing nothing usable. Fixing that took three iterations, each surfacing a genuinely different failure that only appeared by running the thing end to end.
+
+**Bug 1 — silent publish race (fixed in `eb8004b`, shipped as v1.0.1).** The CI log showed electron-builder starting *two* GitHub publishers concurrently; both checked whether the release existed, both got "no", both created one (hence two releases sharing tag `v1.0.0`), and the job exited while the 795MB upload was still in flight — exit code 0, green tick, no installer. Replaced with `--publish never` + explicit `gh release create`/`upload`, plus pre-flight (artifacts exist) and post-flight (≥3 assets `uploaded`) checks.
+
+**Bug 2 — auto-update feed pointed at a 404 (fixed in the `artifactName` commit).** v1.0.1 then published *successfully* — all three assets uploaded, every check passed — and auto-update was **still** broken. `productName` has spaces, so the artifact was `Starmans Sole House Setup 1.0.1.exe` on disk, and electron-builder normalised that to hyphens in `latest.yml` while GitHub's upload API normalised it to dots. Verified concretely: the URL `latest.yml` named returned **404**, the dotted one **200**. Fixed at the root by pinning a space-free `artifactName`, and added the check that would have caught it — fetch `latest.yml` from the published release, parse `path:`, assert that URL returns 200. **This bug was introduced by Bug 1's fix** (electron-builder's own publisher had normalised both sides consistently), which is the clearest argument in this whole sequence for testing the actual outcome rather than the mechanism.
+
+**Bug 3 — my own invalid config key (broke v1.0.2's build).** I documented the `artifactName` constraint as a `_artifactName_comment` key inside the `build` block; electron-builder validates strictly and rejected it. Notably this failed **loudly, at the build step, before creating any release** — the opposite of the v1.0.0 behaviour, and evidence the guards work. Explanation moved to `Desktop_app/README.md` (JSON has no comments) alongside the no-spaces rule, so neither gets re-broken.
+
+**v1.0.3 verified working, independently of CI's own claims:**
+- All three assets uploaded (`.exe` 832,675,992 bytes, `latest.yml`, blockmap)
+- CI's end-to-end feed check passed: `latest.yml points at: Starmans-Sole-House-Setup-1.0.3.exe` → `HTTP 200`
+- Re-verified from outside CI, anonymously, exactly as a client would: fetched `latest.yml` over plain HTTPS with no auth, parsed the filename out of it, and confirmed that URL returns 200
+
+**Also confirmed along the way:** code signing works (`signtool.exe` invoked against the installer with the CI certificate), and the repo going public is what makes the update feed anonymously readable at all — while private, every client's update check would have 404'd regardless of the bugs above.
+
+**Still unverified, and unchanged by any of this:** whether the installer actually *installs* on Windows — SQL Server Express provisioning, the custom NSIS password page rendering, `app-config.json` round-tripping, and the app launching afterwards. Publishing correctly and installing correctly are separate claims; only the first is now evidenced. `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` covers the second.

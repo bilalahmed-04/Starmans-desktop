@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans Sole House Setup 1.0.0.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.3.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -73,9 +73,14 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.0 (this copy)
-- **Built from commit:** `82b7434`
-- **Signed:** No — this is a locally built copy. Builds published to GitHub
-  Releases *are* signed (confirmed: CI invokes `signtool.exe` against the
-  installer), so prefer downloading from the releases page above when one is
-  available with a working installer attached.
+- **App version:** 1.0.3
+- **Signed:** Yes — built and signed by CI (`signtool.exe` with the project
+  certificate). It's a *self-signed* certificate, so SmartScreen still warns on
+  first run; that's expected and covered under "Installing" above.
+- **Downloaded from:** the GitHub Release, so this is byte-identical to what
+  the auto-updater serves.
+
+Earlier versions (1.0.0–1.0.2) were never usable releases — their builds either
+published no installer or produced an update feed pointing at a missing file.
+See `DECISIONS.md` for what went wrong and how it was fixed. 1.0.3 is the first
+release with a verified installer and a working update feed.
