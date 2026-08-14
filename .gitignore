@@ -50,3 +50,9 @@ Desktop_app/build/nsis-lint/*.exe
 Desktop_app/build/certs/*.pfx
 Desktop_app/build/certs/*.pem
 Desktop_app/build/certs/*.p12
+
+# Deployable bundle — contains the ~795MB installer, never commit the binary.
+# The README/checklist inside it ARE tracked (see the ! rules below).
+deployable/*
+!deployable/README.md
+!deployable/INSTALL-CHECKLIST.md
