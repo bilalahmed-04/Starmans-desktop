@@ -37,6 +37,22 @@ All of `TASKS.md`'s task board — the MSSQL migration (Tasks 1–12) and the El
 
 **One caveat still open:** `scripts/ensureSqlServer.js`'s SQL Server Express silent-install has never run on a real Windows machine (this whole project was developed on Linux) — see that file's own header comment and `DECISIONS.md`. Needs real-Windows verification before this installer goes near a client machine.
 
+## Two build-config constraints that are easy to break
+
+**`build.artifactName` must contain no spaces.** `productName` ("Starmans Sole
+House") legitimately has them — it's the Start Menu and window-title name — but
+a *filename* with spaces gets normalised differently by different tools:
+electron-builder writes hyphens into `latest.yml`, GitHub's upload API turns
+them into dots. That mismatch shipped in v1.0.1 and made `latest.yml` point at
+a URL that 404s, silently breaking auto-update for every client. The pinned
+hyphenated `artifactName` keeps the on-disk file, `latest.yml`, and the
+uploaded asset byte-identical.
+
+**No comment keys in the `build` block.** electron-builder validates its config
+strictly and rejects unknown properties outright — a `_comment` key added here
+failed the v1.0.2 build with `Invalid configuration object`. JSON has no
+comments; document build-config reasoning here or in `DECISIONS.md` instead.
+
 ## Running it during development
 
 ```
