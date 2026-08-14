@@ -1,7 +1,7 @@
 {
   "name": "starmans-desktop",
-  "version": "1.0.0",
-  "description": "Starmans Sole House — Electron desktop app (main process + IPC layer wrapping Backend/ and frontend/app/)",
+  "version": "1.0.1",
+  "description": "Starmans Sole House \u2014 Electron desktop app (main process + IPC layer wrapping Backend/ and frontend/app/)",
   "private": true,
   "main": "main.js",
   "scripts": {
@@ -9,8 +9,8 @@
     "pack": "electron-builder --dir",
     "download:sqlserver": "node scripts/downloadSqlServer.js",
     "build:frontend": "npm --prefix frontend/app run build",
-    "dist:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win",
-    "release:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win --publish always"
+    "dist:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win --publish never",
+    "release:win": "npm run download:sqlserver && npm run build:frontend && electron-builder --win --publish never"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
@@ -38,8 +38,14 @@
       "frontend/app/dist/**/*"
     ],
     "extraResources": [
-      { "from": "build/sqlserver/SQLEXPR_x64_ENU.exe", "to": "sqlserver/SQLEXPR_x64_ENU.exe" },
-      { "from": "build/setup-sqlserver.ps1", "to": "setup-sqlserver.ps1" }
+      {
+        "from": "build/sqlserver/SQLEXPR_x64_ENU.exe",
+        "to": "sqlserver/SQLEXPR_x64_ENU.exe"
+      },
+      {
+        "from": "build/setup-sqlserver.ps1",
+        "to": "setup-sqlserver.ps1"
+      }
     ],
     "win": {
       "target": "nsis"

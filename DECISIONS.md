@@ -257,3 +257,51 @@ This pattern, GitHub Actions release automation, and `electron-updater` auto-upd
 **Verification approach worth noting:** tested against a throwaway `starmans_task19_scratch` database rather than the live one. An initial attempt to simulate a fresh install by emptying the live `Settings` table was blocked as unsafe — correctly, since that script's failure path would not have restored the row. The scratch-database approach is strictly better and is the pattern to reuse for this kind of destructive-state test.
 
 **Alternatives considered:** first-run setup screen (recommended, declined by the owner — better security and UX, but real frontend work); seed-the-default-then-force-a-change-on-first-login (rejected as the worst of both — it still creates a default-credential window *and* needs the frontend work).
+
+---
+
+## 2026-08-14 — Publish release assets with `gh`, not electron-builder's own publisher
+
+**Decision:** `electron-builder` now runs with `--publish never`. The workflow creates the GitHub Release and uploads assets itself via `gh release create` / `gh release upload`, with explicit verification steps before and after.
+
+**Why — this fixed a real, diagnosed failure, not a hypothetical one.** The `v1.0.0` release build reported success with a green tick but shipped nothing usable: the release page had only an 845KB blockmap, no installer and no `latest.yml`. The CI log showed exactly what happened:
+
+```
+• publishing      publisher=Github (…)      ← started twice
+• publishing      publisher=Github (…)
+• uploading       file=…exe.blockmap
+• uploading       file=…exe
+• creating GitHub release  reason=release doesn't exist tag=v1.0.0   ← both raced
+• creating GitHub release  reason=release doesn't exist tag=v1.0.0
+Post job cleanup.                            ← job ended mid-upload
+```
+
+Two publisher instances ran concurrently, both checked whether the release existed, both got "no", and **both created one** — which is why two releases shared tag `v1.0.0`. The job then exited while the 795MB upload was still in flight, with no error and no non-zero exit. Only the small blockmap finished in time.
+
+The critical property here is not that it failed but that **it failed silently and reported success**. A release pipeline that can publish an empty release while showing a green tick is worse than one that breaks loudly.
+
+**What the replacement guarantees that the old one didn't:**
+- **One release, created explicitly before any upload** — the race cannot occur.
+- **Uploads are sequential with real exit codes**, so a failure fails the job.
+- **Pre-flight check** that the `.exe`, `latest.yml` and blockmap all exist before creating a release at all.
+- **Post-flight check** that ≥3 assets actually reached the release in `uploaded` state — the specific thing nobody verified on `v1.0.0`.
+- **Version/tag mismatch is a hard failure.** `release_pipeline.md` §4 calls this the rule that bites: the shipped version comes from `package.json`, not the tag, so a mismatch produces a release whose assets claim a different version and whose update check silently never fires. Now the build refuses to run instead.
+- `--clobber` on upload, so re-running a partially-failed release overwrites rather than erroring on an existing asset.
+
+**Confirmed working from the same failed run:** code signing. The log shows `signtool.exe` invoked against the installer with the CI certificate, so `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` are correctly named and functioning — that open question is closed.
+
+**Not deleted:** the two broken `v1.0.0` releases still exist. Removing published release state was deliberately left to the project owner rather than done unilaterally; bumping to `v1.0.1` supersedes them anyway, since GitHub marks the newest release `Latest` and that is what the updater reads. They can be deleted manually at any time.
+
+**Alternatives considered:** keeping electron-builder's publisher and adding retries (rejected — doesn't address the race, only the symptom, and the failure mode is silent); pre-creating a draft release for electron-builder to find (would likely avoid the race, but still leaves upload success unverified and the job green either way).
+
+---
+
+## 2026-08-14 — Repository made public; auto-update is now actually viable
+
+**Decision (owner's, recorded here because it unblocks a logged constraint):** `bilalahmed-04/Starmans-desktop` is now public.
+
+**Why it matters technically:** the shipped `app-update.yml` carries no auth token — by design, since embedding a GitHub token in an Electron app publishes that credential to anyone who unzips it. While the repo was private, every client's update check would have hit a 404 on `latest.yml`, so **auto-update could not have worked at all**, regardless of the publishing bug above. `IPC_VS_HTTP_FINDINGS.md` §6 Step 7 flags a private repo as exactly this class of permanent, actionable failure.
+
+Public repo + working asset upload means the update path is now genuinely functional end to end, rather than a feature that would have failed on first use at a client site.
+
+**Consequence to be aware of:** the source is now publicly readable. Nothing in the repository contains credentials (`.env`, the `.pfx`, and the base64 cert are all gitignored, and this was re-verified against the full git history before each push), but the code, the schema, and this decision log are all now public.

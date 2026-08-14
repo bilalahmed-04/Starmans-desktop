@@ -26,6 +26,27 @@ jobs:
         with:
           node-version: 20
 
+      # The shipped version comes from package.json, NOT the git tag — that's
+      # what names the .exe and what latest.yml records. If they disagree, the
+      # release is attached to the tag but its assets claim a different
+      # version, and every client's update check compares wrongly and never
+      # sees the update. So: read package.json for filenames, and fail the
+      # build outright if it doesn't match the tag, rather than shipping a
+      # mismatch that only surfaces months later as "updates don't work".
+      - name: Resolve and check version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./Desktop_app/package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "package.json version: $V"
+          echo "git tag:              ${GITHUB_REF_NAME}"
+          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Version mismatch: package.json says $V (expected tag v$V) but tag is ${GITHUB_REF_NAME}. Bump Desktop_app/package.json and re-tag."
+            exit 1
+          fi
+
       - run: npm install
         working-directory: Desktop_app
 
@@ -35,15 +56,81 @@ jobs:
       - run: npm install
         working-directory: Desktop_app/frontend/app
 
+      # Build only — electron-builder does NOT publish (`--publish never`).
+      # Its own GitHub publisher raced with itself on the v1.0.0 run: two
+      # publisher instances started, both saw "release doesn't exist", both
+      # created one (hence two duplicate releases), and the job exited while
+      # the 795MB upload was still in flight — with no error and a green
+      # tick. Uploading explicitly below is deterministic and fails loudly.
+      # latest.yml is still produced here; it's a build artifact, not
+      # something the publisher generates.
       - run: npm run release:win
         working-directory: Desktop_app
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder's standard Windows code-signing env vars — it
           # auto-detects and signs when both are set, no package.json config
           # needed. CSC_LINK accepts base64-encoded .pfx content directly.
-          # See DECISIONS.md's code-signing entry for how these secrets were
-          # generated and how to rotate them (e.g. swapping in a real
-          # purchased cert later is just updating these two secrets).
+          # Confirmed working on the v1.0.0 run (signtool.exe invoked against
+          # the .exe). See DECISIONS.md's code-signing entry for rotation.
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      # Fail early and clearly if the build didn't produce what we expect,
+      # rather than publishing a release that's missing its installer.
+      # latest.yml is the easiest to lose and the most damaging: without it
+      # every installed client's update check breaks, while the release page
+      # still looks fine.
+      - name: Verify build artifacts exist
+        shell: bash
+        working-directory: Desktop_app/release
+        run: |
+          set -euo pipefail
+          ls -la
+          test -f "Starmans Sole House Setup ${{ steps.ver.outputs.version }}.exe" || { echo "::error::installer .exe missing"; exit 1; }
+          test -f latest.yml || { echo "::error::latest.yml missing — auto-update would silently break"; exit 1; }
+          test -f "Starmans Sole House Setup ${{ steps.ver.outputs.version }}.exe.blockmap" || { echo "::error::blockmap missing"; exit 1; }
+
+      # One release, created explicitly, before any upload — no race possible.
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists — reusing it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes "Starmans Sole House ${GITHUB_REF_NAME}. See deployable/README.md for install instructions."
+          fi
+
+      # --clobber so re-running a failed release overwrites partial uploads
+      # instead of erroring on an asset that's already there.
+      - name: Upload release assets
+        shell: bash
+        working-directory: Desktop_app/release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          gh release upload "${GITHUB_REF_NAME}" \
+            "Starmans Sole House Setup ${V}.exe" \
+            "Starmans Sole House Setup ${V}.exe.blockmap" \
+            latest.yml \
+            --clobber
+
+      # Prove the assets are actually on the release — the v1.0.0 failure
+      # looked successful right up until you opened the release page.
+      - name: Verify uploaded assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "${GITHUB_REF_NAME}" --json assets \
+            --jq '.assets[] | "\(.name)  \(.size) bytes  \(.state)"'
+          COUNT=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '[.assets[] | select(.state=="uploaded")] | length')
+          echo "uploaded assets: $COUNT"
+          test "$COUNT" -ge 3 || { echo "::error::expected 3 uploaded assets, got $COUNT"; exit 1; }

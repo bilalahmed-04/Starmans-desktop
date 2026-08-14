@@ -60,11 +60,22 @@ The app itself still installs even if database setup fails — so you may see th
 ## Known limitations of this specific build
 
 - **Self-signed certificate.** SmartScreen warns on first run. A real purchased certificate removes this — swapping one in is a config change, not a rebuild of the app.
-- **Auto-update won't work yet.** The app has a "Check for Updates" feature, but the GitHub repository it points at is private, so an installed client can't read the update feed anonymously. Until that's resolved, updates mean handing over a new `.exe`.
 - **Not yet verified end-to-end on Windows.** Everything here was built and tested on Linux; the installer compiles correctly on a real Windows CI runner, but the actual install/run cycle on Windows hasn't been observed yet. That's exactly what `INSTALL-CHECKLIST.md` is for.
+
+## Getting later versions
+
+The app's **Check for Updates** (in the app) reads GitHub Releases directly, so
+once a new version is published the client can update in place — no reinstall,
+no new download to hand over.
+
+Releases live at:
+`https://github.com/bilalahmed-04/Starmans-desktop/releases`
 
 ## Version
 
-- **App version:** 1.0.0
+- **App version:** 1.0.0 (this copy)
 - **Built from commit:** `82b7434`
-- **Signed:** No (locally built copy — the CI-built one is signed, but its upload to GitHub Releases failed)
+- **Signed:** No — this is a locally built copy. Builds published to GitHub
+  Releases *are* signed (confirmed: CI invokes `signtool.exe` against the
+  installer), so prefer downloading from the releases page above when one is
+  available with a working installer attached.
