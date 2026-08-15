@@ -362,3 +362,21 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Pattern worth naming explicitly, since it's now happened twice:** each fix has been uncovering the *next* layer, not fixing the actual last blocker. 1.0.5 fixed the encoding bug that let the script parse at all; that let execution reach the `/SAPWORD=` typo, which had been wrong since the script was first written. Fixing that will let execution reach whatever comes after it. This is expected behavior for a script that could never previously execute past its first real failure — every fix genuinely closes one gap, but "no more errors reported yet" is not equivalent to "verified working," and won't be until a full run completes on real Windows with no new error surfacing.
 
 **Not done:** a Windows retest of 1.0.7 - the fixes are verified present in the shipped artifact and reasoned correct against documented behavior (Microsoft's install-parameter reference, the standard named-pipes NTLM-loopback workaround), but not yet observed working.
+
+---
+
+### Session - 2026-08-15 (continued) - The `@pwd` syntax error, a self-inflicted port walk, and a retired false assumption
+
+**What changed:**
+- `Desktop_app/build/setup-sqlserver.ps1`
+  - `Set-SaPassword`: `ALTER LOGIN sa WITH PASSWORD = @pwd` replaced with a batch that builds the statement server-side via `QUOTENAME(@pwd, '''')` inside `sp_executesql`. T-SQL requires a string literal there and rejects a bound parameter - hence `Incorrect syntax near '@pwd'` in the real logs. The password is still sent as a `SqlParameter` and never appears in the command text; a `THROW` guard rejects empty/over-128-char passwords, since `QUOTENAME` returns `NULL` past 128 and would otherwise produce a silently no-op batch. Single-quoted here-string (`@'...'@`) so PowerShell cannot interpolate the embedded T-SQL.
+  - New `Get-InstanceStaticPort`, used on the no-config path: reads our instance's pinned port from `SuperSocketNetLib\Tcp\IPAll` and reuses it instead of scanning. Fixes setup migrating its own instance 1433 -> 1434 after a run that pinned the port but died before writing `app-config.json`.
+  - The stale comment claiming the password was "parameterized via sp_executesql" (it wasn't) replaced with an explanation of why the parameterized form cannot work at all.
+- `Desktop_app/package.json` - 1.0.8 -> 1.0.9
+- `DECISIONS.md`, `TASKS.md` (Task 27), `deployable/README.md`, `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` - updated per the standing conventions
+
+**Why:** two real `sqlserver-setup.log` runs from the Windows machine - 12:52 (fresh install, SQL Server Express installed cleanly, exit code 0) and 13:25 (repair path on the instance that install left behind). Both got all the way through install, TCP/port pinning and the Windows-Integrated-auth connection - the 1.0.7 named-pipes fix **worked**, the log shows `Connected via named pipes/shared memory (.\SQLEXPRESS)` - and then both died on the same `Incorrect syntax near '@pwd'`.
+
+**The process finding, which matters more than either bug.** Every prior session in this sequence recorded "no PowerShell interpreter is available in this dev environment" and substituted Python parsers, `grep` and brace-counting. That assumption was never retested, and it is the same class of mistake as the 1.0.5 encoding bug this log already dissected: checking the file with *my* tools rather than the *target* interpreter. PowerShell 7.4.6 linux-x64 installs from Microsoft's GitHub release into a scratch dir with no root required. The fix was verified with the actual parser (`Parser::ParseFile` - 0 errors, 1782 tokens) and by dumping the here-string's literal value out of the token stream to prove no `$` interpolation occurred. **Future sessions should use it rather than repeating the workaround.**
+
+**Not done, and deliberately so:** the batch was not executed against a real SQL Server. Docker is installed here but its daemon isn't reachable, and spinning up `mssql/server` to run the statement for real was offered and declined in favour of the parse check. So the T-SQL is reasoned-correct against documented `QUOTENAME`/`ALTER LOGIN` behaviour, not observed working. Also not done: a rebuild - `deployable/` still holds the 1.0.8 `.exe`, which carries the `@pwd` bug.

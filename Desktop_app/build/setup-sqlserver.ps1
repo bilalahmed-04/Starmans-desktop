@@ -141,6 +141,22 @@ function Get-FreePort {
     throw "No free TCP port found in range $Preferred-$($Preferred + $Attempts - 1) for the SQL Server instance."
 }
 
+# The static port our own instance is already configured to listen on, or 0 if
+# it has none (dynamic ports, or no such instance). Needed because Get-FreePort
+# alone cannot tell "someone else owns 1433" from "WE own 1433": a setup run
+# that got far enough to pin the port but died before writing app-config.json
+# leaves exactly that state, and a re-run would then see 1433 busy and migrate
+# the instance to 1434 for no reason. Ask the instance directly instead.
+function Get-InstanceStaticPort {
+    $instanceId = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL' -ErrorAction SilentlyContinue).$InstanceName
+    if (-not $instanceId) { return 0 }
+    $tcpPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instanceId\MSSQLServer\SuperSocketNetLib\Tcp\IPAll"
+    if (-not (Test-Path $tcpPath)) { return 0 }
+    $tcp = Get-ItemProperty -Path $tcpPath -ErrorAction SilentlyContinue
+    if ($tcp -and $tcp.TcpPort -match '^\d+$') { return [int]$tcp.TcpPort }
+    return 0
+}
+
 function Install-SqlServerExpress {
     Write-Log "No existing SQL Server instance found - installing SQL Server Express from bundled package."
     if (-not (Test-Path $InstallerPath)) {
@@ -286,10 +302,32 @@ function Set-SaPassword {
     }
 
     $cmd = $conn.CreateCommand()
-    # Password is parameterized via sp_executesql to avoid any T-SQL
-    # injection/escaping issues with special characters in the password.
-    $cmd.CommandText = "ALTER LOGIN sa WITH PASSWORD = @pwd; ALTER LOGIN sa ENABLE;"
-    $cmd.Parameters.Add((New-Object System.Data.SqlClient.SqlParameter("@pwd", $SaPassword))) | Out-Null
+    # ALTER LOGIN ... WITH PASSWORD requires a string LITERAL - T-SQL does not
+    # accept a variable or a bound parameter there. Sending
+    # "ALTER LOGIN sa WITH PASSWORD = @pwd" with a SqlParameter therefore fails
+    # with "Incorrect syntax near '@pwd'" (confirmed on a real install log),
+    # and wrapping that exact text in sp_executesql fails identically - the
+    # restriction is on the ALTER LOGIN statement itself, not on the batch.
+    #
+    # So the literal has to be built, but NOT by interpolating the password
+    # into PowerShell's string - that would break on any password containing a
+    # quote and reintroduce the injection risk. Instead the password still
+    # crosses the wire as a real parameter, and QUOTENAME does the escaping
+    # server-side (QUOTENAME(@pwd, '''') wraps it in single quotes and doubles
+    # any embedded ones). The password never appears in the command text.
+    # Single-quoted here-string (@'...'@), not @"..."@ - a double-quoted one
+    # interpolates $-prefixed names, and embedded T-SQL must reach the server
+    # byte-for-byte as written.
+    $cmd.CommandText = @'
+DECLARE @sql nvarchar(max);
+IF @pwd IS NULL OR LEN(@pwd) = 0 OR LEN(@pwd) > 128
+    THROW 50000, 'sa password is empty or longer than the 128 chars QUOTENAME can escape.', 1;
+SET @sql = N'ALTER LOGIN sa WITH PASSWORD = ' + QUOTENAME(@pwd, '''') + N'; ALTER LOGIN sa ENABLE;';
+EXEC sp_executesql @sql;
+'@
+    $pwdParam = New-Object System.Data.SqlClient.SqlParameter("@pwd", [System.Data.SqlDbType]::NVarChar, 128)
+    $pwdParam.Value = $SaPassword
+    $cmd.Parameters.Add($pwdParam) | Out-Null
     $cmd.ExecuteNonQuery() | Out-Null
     $conn.Close()
     Write-Log "sa password set and login enabled."
@@ -372,12 +410,18 @@ try {
             Write-Log "Reusing port $Port from the existing app-config.json (not re-scanning - this machine is already configured)."
         }
     } else {
-        $requested = $Port
-        $Port = Get-FreePort -Preferred $Port
-        if ($Port -ne $requested) {
-            Write-Log "Port $requested is already in use (most likely by an existing SQL Server instance). Using port $Port instead - the app reads the port from app-config.json, so a non-default port is fully supported."
+        $ownPort = Get-InstanceStaticPort
+        if ($ownPort -gt 0) {
+            $Port = $ownPort
+            Write-Log "Instance '$InstanceName' is already pinned to port $Port - keeping it (a previous setup run configured it but did not get as far as writing app-config.json)."
         } else {
-            Write-Log "Port $Port is free; using it."
+            $requested = $Port
+            $Port = Get-FreePort -Preferred $Port
+            if ($Port -ne $requested) {
+                Write-Log "Port $requested is already in use (most likely by an existing SQL Server instance). Using port $Port instead - the app reads the port from app-config.json, so a non-default port is fully supported."
+            } else {
+                Write-Log "Port $Port is free; using it."
+            }
         }
     }
 

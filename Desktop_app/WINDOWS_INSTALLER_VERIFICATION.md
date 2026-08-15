@@ -65,8 +65,10 @@ Or, once `release.yml`'s two GitHub secrets are configured, trigger a real signe
 This is the highest-risk, least-verified part of the whole project — genuinely never run outside static/source-level review (see `TASKS.md` Task 21's notes on what *was* checked).
 
 - [ ] SQL Server Express actually gets installed (check installed-programs list, `Get-Service 'MSSQL$SQLEXPRESS'`)
-- [ ] Mixed-mode auth and TCP/IP on port 1433 are both enabled afterward (`Get-ItemProperty` on the instance's `MSSQLServer` registry key for `LoginMode`; SQL Server Configuration Manager for TCP/IP)
-- [ ] `sa` login is enabled with the password you typed in step 2 — test this directly, don't just trust the app: `sqlcmd -S 127.0.0.1,1433 -U sa -P <password> -Q "SELECT 1"`
+- [ ] **Read the actual port out of `%ProgramData%\Starmans\app-config.json` first (`mssqlPort`) and use it in every `sqlcmd` below — it is not guaranteed to be 1433.** Since 1.0.6 setup steps aside onto the next free port if 1433 is taken, and since 1.0.9 it reuses the port its own instance is already pinned to
+- [ ] Mixed-mode auth and TCP/IP on that port are both enabled afterward (`Get-ItemProperty` on the instance's `MSSQLServer` registry key for `LoginMode`; SQL Server Configuration Manager for TCP/IP)
+- [ ] `sa` login is enabled with the password you typed in step 2 — test this directly, don't just trust the app: `sqlcmd -S 127.0.0.1,<mssqlPort> -U sa -P <password> -Q "SELECT 1"`
+- [ ] The `sa`-password step completes without `Incorrect syntax near '@pwd'` — that was the 1.0.8 failure (`ALTER LOGIN ... WITH PASSWORD` rejects a bound parameter); 1.0.9 builds the statement via `QUOTENAME` inside `sp_executesql`. **Test it with a password containing an apostrophe and other T-SQL-hostile characters**, since escaping is the whole point of that change and a naive fix would break exactly there
 - [ ] The `starmans` database exists
 - [ ] `%ProgramData%\Starmans\app-config.json` exists and contains the right values (server/port/database/user/password/backup folder) — **confirm it's under `%ProgramData%`, not a per-user path** (`setup-sqlserver.ps1` writes here specifically so it's visible regardless of which Windows user runs the app later, unlike the old `userData`-based approach)
 - [ ] Two log files exist, both under `C:\ProgramData\Starmans\` (**not `%TEMP%`** — an earlier version logged there, which is the *elevated installer's* temp, not the one you'd check in Explorer, and made real test failures undiagnosable): `sqlserver-setup.log` (step-by-step record) and `installer-powershell.log` (raw output, catches failures before the script can log anything itself)
@@ -85,7 +87,7 @@ This is the highest-risk, least-verified part of the whole project — genuinely
 Unchanged from the previous pipeline — this part only deals with the `starmans` database's own tables, not SQL Server installation, and was already the most directly-testable part on Linux.
 
 - [ ] App connects, detects `starmans`'s schema doesn't exist yet, runs `Backend/migrations/001_initial_schema.sql` (batch-split on `GO`)
-- [ ] All 14 tables exist afterward (`sqlcmd -S 127.0.0.1,1433 -d starmans -U sa -P <password> -Q "SELECT name FROM sys.tables"`)
+- [ ] All 14 tables exist afterward (`sqlcmd -S 127.0.0.1,<mssqlPort> -d starmans -U sa -P <password> -Q "SELECT name FROM sys.tables"`) — again, take `<mssqlPort>` from `app-config.json`, don't assume 1433
 - [ ] App proceeds to open its main window (login screen visible)
 
 ## 5. Signing verification (only if the build in step 1 used the real signing secrets)

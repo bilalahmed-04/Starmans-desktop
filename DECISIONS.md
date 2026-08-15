@@ -403,3 +403,37 @@ That explains what looked like two unrelated mysteries: the reported "SQL not de
 **What remains genuinely unverified:** whether a fresh install now completes end-to-end (Bug A is fixed, but nothing downstream of it has been observed on real Windows), and whether the repair path succeeds via one of the three new strategies on a real machine with NTLM restrictions - the fix is reasoned from a well-documented pattern, not observed working. Also unaddressed: repairing a machine with a genuinely foreign `SQLEXPRESS` instance (one Starmans didn't install, where our identity may legitimately lack sysadmin rights) - flagged in `WINDOWS_INSTALLER_VERIFICATION.md` as the one repair scenario not yet exercised, deliberately deferred rather than built for speculatively.
 
 **Updated `WINDOWS_INSTALLER_VERIFICATION.md`** per this fix: corrected a stale `%TEMP%` log-path reference left over from before the 1.0.4 fix, added a check for which auth strategy succeeded, and added the untested foreign-instance repair scenario as a known gap.
+
+---
+
+## 2026-08-15 - `ALTER LOGIN ... WITH PASSWORD` cannot be parameterized; and a PowerShell interpreter is available after all
+
+**The bug (1.0.9), confirmed by real logs from both paths.** `Set-SaPassword` failed with `Incorrect syntax near '@pwd'` on the fresh-install run (12:52) *and* the repair run (13:25). The statement was:
+
+```
+ALTER LOGIN sa WITH PASSWORD = @pwd; ALTER LOGIN sa ENABLE;
+```
+
+sent with a real `SqlParameter`. T-SQL does not accept a bound parameter or a variable in `ALTER LOGIN ... WITH PASSWORD` - that position requires a **string literal**. The comment above the line claimed the password was "parameterized via sp_executesql"; it was not using `sp_executesql` at all, and - importantly - **wrapping that exact statement in `sp_executesql` would have failed identically**, because the restriction belongs to `ALTER LOGIN`, not to the batch. That misleading comment is why this looked correct on every prior read-through.
+
+**Decision: build the literal server-side with `QUOTENAME`, never in PowerShell.** The obvious fix - interpolating `$SaPassword` into the command string - was rejected: it breaks on any password containing an apostrophe and reintroduces T-SQL injection into the one place in this codebase handling a credential. Instead the password still crosses the wire as a genuine `SqlParameter`, and the escaping happens inside SQL Server:
+
+```
+SET @sql = N'ALTER LOGIN sa WITH PASSWORD = ' + QUOTENAME(@pwd, '''') + N'; ALTER LOGIN sa ENABLE;';
+EXEC sp_executesql @sql;
+```
+
+`QUOTENAME(@pwd, '''')` wraps the value in single quotes and doubles any embedded ones. The password never appears in the command text this script constructs. `QUOTENAME` returns `NULL` above 128 characters, which would silently produce a no-op batch, so the guard `THROW`s on empty or over-128 input rather than reporting success on a password that was never set - the exact failure shape (setup says OK, login still fails) this file's header warns about.
+
+The here-string is single-quoted (`@'...'@`), not double-quoted. A double-quoted here-string interpolates `$`-prefixed names, and embedded T-SQL must reach the server byte-for-byte.
+
+**Second fix in the same pass: stop the instance's own port from being treated as "taken".** The 13:25 log shows setup finding port 1433 busy and migrating its instance to 1434 - but the thing holding 1433 was **our own `SQLEXPRESS`**, pinned there by the 12:52 run that then died on the `@pwd` bug before writing `app-config.json`. `Get-FreePort` cannot distinguish "someone else owns 1433" from "we own 1433"; the existing config-reuse guard only covers machines that got as far as writing a config. New `Get-InstanceStaticPort` reads the port directly off our instance's `SuperSocketNetLib\Tcp\IPAll` registry key and reuses it, so a re-run after a mid-setup failure keeps the port instead of walking it upward each attempt.
+
+**This narrows, but does not close, the gap flagged in the 1.0.6 entry** ("if the machine already has a `SQLEXPRESS` instance specifically, setup still reconfigures *that* instance"). Reconfiguring a genuinely foreign `SQLEXPRESS` is still invasive and still untested; what changed is only that our *own* half-configured instance is no longer misread as a foreign one.
+
+**Process change, and the most reusable thing in this entry: PowerShell IS available in this dev environment.** Every prior entry in this sequence states that no PowerShell interpreter exists here and works around it with Python parsers, `grep`, and brace-counting - the very approach `DECISIONS.md` already identified as the root cause of the 1.0.5 encoding bug ("Verifying that an artifact **contains** the right bytes is not the same as verifying the **target interpreter parses those bytes the same way**"). That assumption was simply never retested. PowerShell 7.4.6 for linux-x64 installs from Microsoft's official GitHub release into a scratch directory **without root**, and the fix above was verified with the real thing:
+
+- `[System.Management.Automation.Language.Parser]::ParseFile` over the whole script - **0 errors, 1782 tokens**
+- the here-string's literal value dumped from the token stream and asserted to contain `DECLARE @sql`, `LEN(@pwd)`, `QUOTENAME(@pwd, '''')` and `EXEC sp_executesql @sql` verbatim - i.e. proof PowerShell did not interpolate anything
+
+**What this still does not verify, stated plainly:** the real parser confirms the script *parses*; it does not execute it. Whether SQL Server accepts this batch, and whether `sa` ends up with the right password, remains unobserved - no SQL Server is reachable from this environment (Docker is installed but its daemon is not accessible). Running SQL Server in a container to execute the batch for real was offered and declined in favour of the parse check, so the T-SQL is reasoned-correct against documented `QUOTENAME`/`ALTER LOGIN` behaviour, not observed working. The pattern named in the 1.0.7 entry therefore still holds: this fix unblocks the next layer rather than proving the install succeeds.

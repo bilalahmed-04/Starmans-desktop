@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.8.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.9.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -83,12 +83,32 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.8
+- **App version:** 1.0.9
 - **Signed:** No — this copy is built locally, and the Linux signing tool can't
   run here. The equivalent build published to GitHub Releases *is* signed
   (CI runs `signtool.exe`), so prefer the release download if you want the
   signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
   regardless — see "Installing" above.
+
+### What changed in 1.0.9
+
+**The database setup now actually gets to the end.** 1.0.8 testing produced the
+first logs showing setup running all the way through: SQL Server Express
+installed cleanly, TCP/IP and the port were configured, and the script
+successfully logged in to configure the `sa` account. It then failed on the
+very last step with `Incorrect syntax near '@pwd'` — the command that sets the
+`sa` password was written in a form SQL Server does not accept. That command
+has been rewritten. This was the failure behind the "install crash" noted in
+1.0.8 below.
+
+**A repeated install no longer drifts onto a new port each time.** If setup got
+as far as claiming port 1433 and then failed, the next attempt saw 1433 as
+"taken" — by its own instance — and moved to 1434, then 1435, and so on. It now
+recognises its own instance and keeps the port it already has.
+
+> **Note:** the two 1.0.8 log runs also confirmed that 1.0.7's named-pipes
+> fix works — the "untrusted domain" login failure from 1.0.7 testing did not
+> recur.
 
 ### What changed in 1.0.8
 
