@@ -348,3 +348,24 @@ Additionally, NSIS now redirects PowerShell's stdout and stderr to `installer-po
 **Verification performed, given no Windows or PowerShell available locally:** brace/paren balance and every called function resolving to a definition (parsed programmatically, since no interpreter exists here); both NSIS lint passes clean; a full `electron-builder --win` build; and — the meaningful one — **extracting `app-64.7z` out of the built installer and reading the shipped `setup-sqlserver.ps1` directly** to confirm all four fixes are present in the artifact rather than merely in the source tree. The only remaining `..\sqlserver` occurrence was checked and is inside an explanatory comment, not code.
 
 **What this does not establish:** whether the install now succeeds on Windows. Every fix above is reasoned and statically verified, not observed working. The difference between those two matters and is not being glossed: the next Windows run is still the real test — but it will now produce logs regardless of how it fails.
+
+---
+
+## 2026-08-15 - Root cause of both failed Windows installs: file encoding, not logic
+
+**What actually broke.** `setup-sqlserver.ps1` was UTF-8 **without a BOM** and contained 90 non-ASCII characters (66 box-drawing `-`, 23 em-dashes, one section sign) - all in comments and message strings I wrote for readability. Windows PowerShell 5.1 decodes a BOM-less file as **ANSI/Windows-1252, not UTF-8**. Each 3-byte em-dash therefore arrived as three garbage characters, one of which reads as a string terminator, so string literals closed early and every subsequent brace mismatched. The script failed to **parse**, which means it never executed a single line.
+
+That explains what looked like two unrelated mysteries: the reported "SQL not defined"-style parser errors, and - the tell I should have caught sooner - **no log file, ever**. A script that fails to parse cannot write its own log, no matter where that log points.
+
+**This was the real blocker in both the v1.0.3 and v1.0.4 installs.** The four bugs fixed in v1.0.4 (installer path, log location, `$args`, dynamic ports) were all genuine, but none of them were ever reached. Fixing them changed nothing observable, which is precisely why the second test failed the same way as the first.
+
+**Why my verification missed it, which is the more useful lesson.** Everything used to check that script - Python's parser, `grep`, the editor - reads files as UTF-8 and saw a perfectly well-formed script. I even extracted the `.ps1` out of the built installer and re-read it to confirm the fixes shipped. Every one of those checks modelled *my* environment's encoding assumption, not the target runtime's. The bug lived entirely in the gap between them. Verifying that an artifact **contains** the right bytes is not the same as verifying the **target interpreter parses those bytes the same way**.
+
+**Fixes, all three layers:**
+1. Both `setup-sqlserver.ps1` and `installer.nsh` rewritten as **pure ASCII**. ASCII decodes identically under every encoding guess, so the failure mode cannot recur regardless of BOM handling.
+2. `setup-sqlserver.ps1` additionally carries a **UTF-8 BOM**, so PowerShell never has to guess - protection for whoever reintroduces a non-ASCII character later.
+3. A **guard in `lint-nsis.sh`** (therefore in the CI gate) that fails the build if either file contains non-ASCII, or if the `.ps1` loses its BOM. Verified to fire by deliberately injecting an em-dash.
+
+**Verification that actually models the failure**, rather than repeating the mistake: decode the file as both UTF-8 and CP1252 and assert the results are byte-identical. Confirmed the new file passes and - importantly - confirmed the **old committed file fails** this same test, so it demonstrably would have caught the original bug. Also re-verified against the `.ps1` extracted from inside the built v1.0.5 installer, not just the source tree.
+
+**Still not established:** whether the install now succeeds. What is established is that the script will parse, which it provably could not before - so any remaining failure will now produce logs and be diagnosable rather than silent.

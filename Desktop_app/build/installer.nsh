@@ -1,20 +1,20 @@
-; installer.nsh — custom NSIS page (database password + backup folder) and
+; installer.nsh - custom NSIS page (database password + backup folder) and
 ; the hook that runs setup-sqlserver.ps1. Included into electron-builder's
 ; generated NSIS script via package.json's build.nsis.include.
 ;
-; *** UNVERIFIED ON REAL WINDOWS — see DECISIONS.md, "REVISED: adopt a
+; *** UNVERIFIED ON REAL WINDOWS - see DECISIONS.md, "REVISED: adopt a
 ; proven bundled-SQL-Server release pipeline". Written against documented
 ; NSIS/electron-builder customization patterns and the three rules below
 ; (learned the hard way in the reference project this pattern comes from),
 ; but this project's dev environment has no NSIS compiler and no Windows to
-; test against. Must be verified with a real build before shipping — see
+; test against. Must be verified with a real build before shipping - see
 ; Task 26's rewritten verification checklist, and ideally add an NSIS lint
 ; CI gate (Task 23) before trusting this compiles cleanly at all. ***
 ;
 ; Three rules that matter more than anything else in this file:
 ;
-; 1. electron-builder compiles this script TWICE — once for the installer,
-;    once for the uninstaller — and the hooks referencing custom
+; 1. electron-builder compiles this script TWICE - once for the installer,
+;    once for the uninstaller - and the hooks referencing custom
 ;    Vars/Functions only exist in the installer pass. Anything declaring a
 ;    Var or defining a Function must be wrapped in !ifndef BUILD_UNINSTALLER
 ;    or the uninstaller compile fails on "unreferenced" warnings (fatal
@@ -24,7 +24,7 @@
 ;    marker of "was this app ever installed on this machine" AND the
 ;    app-config.json file, not either alone. Marker-only: deleting the
 ;    config while the app stays installed skips this page *and* leaves
-;    setup-sqlserver.ps1 with no password — it exits 1 and nothing gets
+;    setup-sqlserver.ps1 with no password - it exits 1 and nothing gets
 ;    configured. Config-only: an uninstall-then-reinstall silently skips
 ;    the page with no way to ever change the password again. Both
 ;    conditions must hold before skipping the page.
@@ -32,8 +32,8 @@
 ;    IMPLEMENTATION NOTE: electron-builder's own uninstall registry key
 ;    (${UNINSTALL_REGISTRY_KEY}, defined in its multiUser.nsh template)
 ;    would be the obvious choice for the "marker" here, but tracing
-;    NsisTarget.js's build (computeCommonInstallerScriptHeader's output —
-;    which is where this custom .nsh file's content lands — is textually
+;    NsisTarget.js's build (computeCommonInstallerScriptHeader's output -
+;    which is where this custom .nsh file's content lands - is textually
 ;    concatenated BEFORE computeFinalScript's output, which is where
 ;    multiUser.nsh actually gets !include'd) found a real risk that this
 ;    file could be compiled before that define exists, a compile-order bug
@@ -44,11 +44,11 @@
 ;    electron-builder-internal define availability timing.
 ;
 ; 3. The password is passed to setup-sqlserver.ps1 through a file in
-;    $PLUGINSDIR, never on the command line — it never reaches the process
+;    $PLUGINSDIR, never on the command line - it never reaches the process
 ;    list that way, and NSIS never has to escape quotes into a command
 ;    string. $PLUGINSDIR is wiped automatically when the installer exits.
 
-; REQUIRED — same compile-ordering reason documented in rule 2's note above:
+; REQUIRED - same compile-ordering reason documented in rule 2's note above:
 ; this file is concatenated into the generated script BEFORE electron-builder
 ; includes these headers itself, so ${If}/${EndIf} (LogicLib) and ${NSD_*}
 ; (nsDialogs) are not yet defined at the point this file is parsed. Confirmed
@@ -73,7 +73,7 @@
 
   Function StarmansDbPage
     ; NSIS has no built-in $COMMONPROGRAMDATA constant (unlike $APPDATA,
-    ; which is per-user) — %ProgramData% must be read from the environment.
+    ; which is per-user) - %ProgramData% must be read from the environment.
     ReadEnvStr $ProgramDataDir "ProgramData"
     StrCpy $AppConfigPath "$ProgramDataDir\Starmans\app-config.json"
 
@@ -94,7 +94,7 @@
       Abort
     ${EndIf}
 
-    ${NSD_CreateLabel} 0 0 100% 24u "Set a database password for Starmans. You'll need this if you ever reinstall on this machine — write it down somewhere safe."
+    ${NSD_CreateLabel} 0 0 100% 24u "Set a database password for Starmans. You'll need this if you ever reinstall on this machine - write it down somewhere safe."
     Pop $Label
 
     ${NSD_CreateLabel} 0 30u 100% 12u "Database Password:"
@@ -159,17 +159,17 @@
 
 ; electron-builder's documented hook point for inserting a custom page
 ; right after the "choose install directory" page. This is the actual
-; insertion into the page flow — StarmansDbPage/StarmansDbPageLeave above
+; insertion into the page flow - StarmansDbPage/StarmansDbPageLeave above
 ; are just function definitions until this macro wires them in.
 !macro customPageAfterChangeDir
   Page custom StarmansDbPage StarmansDbPageLeave
 !macroend
 
-; customInstall — electron-builder's documented hook, called after files
+; customInstall - electron-builder's documented hook, called after files
 ; are copied but still within the elevated installer process.
 !macro customInstall
   ; Self-owned marker for rule 2's "was this app ever installed here"
-  ; check — written on every successful install (fresh or update alike),
+  ; check - written on every successful install (fresh or update alike),
   ; read back by StarmansDbPage on any future reinstall.
   WriteRegStr HKLM "Software\Starmans" "Installed" "1"
 
@@ -185,7 +185,7 @@
 
   ; Everything PowerShell writes (stdout AND stderr) is redirected to a file
   ; in ProgramData. The v1.0.3 Windows test produced NO log at all, which made
-  ; the failure undiagnosable — if the script dies before its own first log
+  ; the failure undiagnosable - if the script dies before its own first log
   ; line (bad path, execution policy, a parse error, a missing .NET type) it
   ; can never log that itself. cmd's redirection captures those cases because
   ; it wraps the interpreter rather than living inside it.
@@ -193,7 +193,7 @@
   CreateDirectory "$9\Starmans"
 
   ${If} $IsUpdateInstall == "1"
-    ; Update path: no password argument — the script reads it back from
+    ; Update path: no password argument - the script reads it back from
     ; the existing app-config.json itself.
     ExecWait '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" > "$9\Starmans\installer-powershell.log" 2>&1"' $7
   ${Else}

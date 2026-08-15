@@ -1,20 +1,20 @@
-# setup-sqlserver.ps1 — takes a Windows PC from "no database at all" to
+﻿# setup-sqlserver.ps1 - takes a Windows PC from "no database at all" to
 # "Starmans can log in", or repairs an existing broken install. Runs on
-# EVERY install and EVERY update (see installer.nsh) — every step here must
+# EVERY install and EVERY update (see installer.nsh) - every step here must
 # be idempotent, that's what makes a reinstall a genuine repair.
 #
 # Design constraints, per DECISIONS.md ("REVISED: adopt a proven
-# bundled-SQL-Server release pipeline") and release_pipeline.md §6 Step 4 —
+# bundled-SQL-Server release pipeline") and release_pipeline.md Section 6 Step 4 -
 # do not weaken these without updating both docs:
 #   - Every step idempotent.
-#   - End with a REAL connection test — not "the installer returned 0".
+#   - End with a REAL connection test - not "the installer returned 0".
 #     Actually connect as sa over TCP and run a query.
-#   - THIS SCRIPT writes app-config.json, not NSIS — PowerShell's
+#   - THIS SCRIPT writes app-config.json, not NSIS - PowerShell's
 #     ConvertTo-Json escapes correctly by construction; hand-rolled NSIS
 #     JSON escaping previously shipped a config whose password didn't match
 #     what was actually set on sa (setup reported success, login still
 #     failed).
-#   - Write the config machine-wide (%ProgramData%), never per-user — the
+#   - Write the config machine-wide (%ProgramData%), never per-user - the
 #     installer runs elevated, so a per-user path lands in the elevating
 #     admin's profile and is invisible to whoever actually runs the app.
 #   - Log everything to a file; the installer names that file in its error
@@ -22,18 +22,18 @@
 #   - Password argument optional. Absent = update path: read it back from
 #     the existing config instead of demanding a new one.
 #
-# *** UNVERIFIED ON REAL WINDOWS — see DECISIONS.md. Written against
+# *** UNVERIFIED ON REAL WINDOWS - see DECISIONS.md. Written against
 # documented SQL Server silent-install/configuration references, but this
 # project's dev environment is Linux-only. Must be run end-to-end on a real
-# Windows machine before shipping — see Task 26's rewritten verification
+# Windows machine before shipping - see Task 26's rewritten verification
 # checklist. ***
 
 param(
-    [string]$SaPassword,                      # optional — absent means "update path", read existing config
+    [string]$SaPassword,                      # optional - absent means "update path", read existing config
     [string]$BackupFolder = "$env:USERPROFILE\Documents\Starmans Backup",
     # BOTH this script and the bundled SQL Server installer land in
     # <INSTDIR>\resources\ (electron-builder extraResources), so they are
-    # SIBLINGS — no "..". An earlier "$PSScriptRoot\..\sqlserver\" pointed at
+    # SIBLINGS - no "..". An earlier "$PSScriptRoot\..\sqlserver\" pointed at
     # <INSTDIR>\sqlserver\, one level too high, and would have made a
     # fresh-machine install fail with "Bundled SQL Server installer not
     # found". Verified against the real win-unpacked layout, not assumed.
@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Stop'
 $ConfigDir = "$env:ProgramData\Starmans"
 $ConfigPath = "$ConfigDir\app-config.json"
 
-# Log to a FIXED, machine-wide path — never $env:TEMP. The installer runs
+# Log to a FIXED, machine-wide path - never $env:TEMP. The installer runs
 # elevated, so its %TEMP% is the *administrator's* temp (frequently
 # C:\Windows\Temp), not the %TEMP% the logged-in user sees in Explorer. The
 # v1.0.3 Windows test failed and the log was nowhere the tester could find it,
@@ -84,7 +84,7 @@ function Test-SqlConnection {
 }
 
 function Get-ExistingInstance {
-    # Look in the 64-bit registry view specifically — a 32-bit process (NSIS)
+    # Look in the 64-bit registry view specifically - a 32-bit process (NSIS)
     # calling a bare `Get-ItemProperty` on a 32-bit-launched powershell.exe
     # would see WOW6432Node and miss a real SQL Server install entirely.
     # This script itself must be invoked via Sysnative PowerShell (see
@@ -125,11 +125,11 @@ function Test-PortInUse {
 }
 
 function Install-SqlServerExpress {
-    Write-Log "No existing SQL Server instance found — installing SQL Server Express from bundled package."
+    Write-Log "No existing SQL Server instance found - installing SQL Server Express from bundled package."
     if (-not (Test-Path $InstallerPath)) {
         throw "Bundled SQL Server installer not found at $InstallerPath"
     }
-    # NOT $args — that's a PowerShell automatic variable (unbound arguments
+    # NOT $args - that's a PowerShell automatic variable (unbound arguments
     # inside a function). Assigning to it is legal but shadows built-in
     # behaviour and misbehaves under StrictMode.
     $setupArgs = @(
@@ -144,13 +144,13 @@ function Install-SqlServerExpress {
     )
     $proc = Start-Process -FilePath $InstallerPath -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
     if ($proc.ExitCode -ne 0) {
-        throw "SQL Server Express installer exited with code $($proc.ExitCode) — see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
+        throw "SQL Server Express installer exited with code $($proc.ExitCode) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
     }
     Write-Log "SQL Server Express install completed (exit code 0)."
 }
 
 function Set-SqlServerConfig {
-    # Force mixed-mode auth + TCP/IP on port 1433 on an EXISTING instance —
+    # Force mixed-mode auth + TCP/IP on port 1433 on an EXISTING instance -
     # needed both for a fresh install (belt-and-suspenders, the installer
     # args above already requested this) and for REPAIRING a PC that has
     # SQL Server but with Windows-only auth or TCP disabled.
@@ -169,7 +169,7 @@ function Set-SqlServerConfig {
     Set-ItemProperty -Path $loginModePath -Name LoginMode -Value 2  # 2 = Mixed Mode
 
     # TCP/IP enabled + pinned to the requested port, via the SQL Server
-    # Configuration Manager WMI provider (version varies by SQL release —
+    # Configuration Manager WMI provider (version varies by SQL release -
     # try known namespaces).
     $wmiNamespace = Get-WmiObject -Namespace root\Microsoft\SqlServer -Class __NAMESPACE -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'ComputerManagement*' } | Select-Object -First 1
@@ -201,7 +201,7 @@ function Set-SqlServerConfig {
             }
         }
     } else {
-        Write-Log "WARNING: could not locate SQL Server Configuration Manager WMI namespace — TCP/IP config may need manual verification."
+        Write-Log "WARNING: could not locate SQL Server Configuration Manager WMI namespace - TCP/IP config may need manual verification."
     }
 
     Write-Log "Restarting SQL Server service to apply config changes..."
@@ -211,7 +211,7 @@ function Set-SqlServerConfig {
 
 function Set-SaPassword {
     # Enable the sa login and set its password using WINDOWS INTEGRATED AUTH
-    # (the current process is already elevated/admin) — this is what lets
+    # (the current process is already elevated/admin) - this is what lets
     # this REPAIR a PC where sa is disabled or its password is unknown, since
     # integrated auth as a local admin always works regardless of sa's state.
     Write-Log "Setting sa password via Windows Integrated auth..."
@@ -253,7 +253,7 @@ function Write-AppConfig {
         backupFolder  = $BackupFolder
         configuredAt  = (Get-Date -Format 'o')
     }
-    # ConvertTo-Json escapes correctly by construction — do not hand-roll
+    # ConvertTo-Json escapes correctly by construction - do not hand-roll
     # this in NSIS, see the file header comment for why that already went
     # wrong once in the reference project.
     $config | ConvertTo-Json | Set-Content -Path $ConfigPath -Encoding UTF8
@@ -262,13 +262,13 @@ function Write-AppConfig {
 
 function Read-ExistingPassword {
     if (-not (Test-Path $ConfigPath)) {
-        throw "No SaPassword argument given and no existing config at $ConfigPath to read one from — cannot proceed on the update path."
+        throw "No SaPassword argument given and no existing config at $ConfigPath to read one from - cannot proceed on the update path."
     }
     $existing = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
     return $existing.mssqlPassword
 }
 
-# ─── main ───────────────────────────────────────────────────────────────
+# --- main ---------------------------------------------------------------
 
 try {
     Write-Log "=== Starmans SQL Server setup starting ==="
@@ -309,7 +309,7 @@ try {
         }
         Install-SqlServerExpress
     } else {
-        Write-Log "Existing SQL Server instance '$InstanceName' found — repairing/verifying configuration instead of installing."
+        Write-Log "Existing SQL Server instance '$InstanceName' found - repairing/verifying configuration instead of installing."
     }
 
     Set-SqlServerConfig
@@ -319,7 +319,7 @@ try {
 
     Write-Log "Verifying with a real sa connection..."
     if (-not (Test-SqlConnection -Password $SaPassword)) {
-        throw "Post-setup verification connection failed — sa login/database appears misconfigured despite setup completing. See log above for details."
+        throw "Post-setup verification connection failed - sa login/database appears misconfigured despite setup completing. See log above for details."
     }
 
     Write-Log "=== Starmans SQL Server setup completed successfully ==="
