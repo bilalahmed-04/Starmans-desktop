@@ -192,15 +192,31 @@
   ReadEnvStr $9 "ProgramData"
   CreateDirectory "$9\Starmans"
 
+  ; Hiding the console window (below) removes the "looks frozen" symptom, but
+  ; the wait itself is still several silent minutes with no console to watch.
+  ; This line to the install page's details list is the only feedback a
+  ; non-technical user gets that something is actually happening.
+  DetailPrint "Setting up the database - this can take several minutes..."
+
+  ; Plain ExecWait on cmd.exe shows a real, visible console window for the
+  ; entire multi-minute SQL Server install - which sat there BLANK (all
+  ; output goes to the log file, not the window) and looked exactly like a
+  ; hang to a v1.0.7 tester. nsExec::Exec runs the same command with its
+  ; window hidden while still returning the exit code on the stack (Pop).
+  ; Silent background provisioning was the intended UX all along (see
+  ; release_pipeline.md's original design) - this was never a deliberate
+  ; choice, just an oversight in how ExecWait was used.
   ${If} $IsUpdateInstall == "1"
     ; Update path: no password argument - the script reads it back from
     ; the existing app-config.json itself.
-    ExecWait '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" > "$9\Starmans\installer-powershell.log" 2>&1"' $7
+    nsExec::Exec '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" > "$9\Starmans\installer-powershell.log" 2>&1"'
+    Pop $7
   ${Else}
     FileOpen $4 "$PLUGINSDIR\db_password.txt" r
     FileRead $4 $8
     FileClose $4
-    ExecWait '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" -SaPassword "$8" -BackupFolder "$BackupFolder" > "$9\Starmans\installer-powershell.log" 2>&1"' $7
+    nsExec::Exec '"$SYSDIR\cmd.exe" /C ""$6" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\setup-sqlserver.ps1" -SaPassword "$8" -BackupFolder "$BackupFolder" > "$9\Starmans\installer-powershell.log" 2>&1"'
+    Pop $7
   ${EndIf}
 
   ${If} $7 != 0

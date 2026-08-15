@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.7.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.8.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -83,7 +83,7 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.7
+- **App version:** 1.0.8
 - **Signed:** No — this copy is built locally, and the Linux signing tool can't
   run here. The equivalent build published to GitHub Releases *is* signed
   (CI runs `signtool.exe`), so prefer the release download if you want the
