@@ -324,9 +324,15 @@ Supersedes Task 16's `ensureSqlServer.js` approach — see `DECISIONS.md`, "REVI
 - Kept the Task 19 login-lockout blocker note at the top (still open, still blocks step 6's login check regardless of anything in this pipeline)
 - Depends on: Tasks 20–25 substantially done — satisfied (all of Group 6 is now code-complete, pending only real Windows execution)
 
----
-
-## Notes for agents picking up tasks
+**Task 27: Fix real bugs found by actual Windows testing (1.0.4–1.0.7)** (working) [assigned: claude, started: 2026-08-14]
+- Not part of the original Group 6 scope — this is the real-world fix cycle after Task 26's checklist was actually run on Windows. Kept as one task since the entries below aren't independent work items, they're one continuous test-fix-retest loop against the same artifact.
+- **1.0.4:** installer path for the bundled SQL Server package was one directory too high; logs went to the elevated installer's `%TEMP%` (unfindable); `$args` (a PowerShell automatic variable) was being assigned to; `TcpDynamicPorts` wasn't cleared, so SQL Server Express's default dynamic-port behavior would have silently overridden the pinned port
+- **1.0.5:** the actual root cause of both 1.0.3 and 1.0.4 failing identically — `setup-sqlserver.ps1` was UTF-8 without a BOM and contained 90 non-ASCII characters (em-dashes, box-drawing lines) in comments; PowerShell 5.1 decoded the file as ANSI, corrupting those into characters that broke string literals, so the script never parsed and could never log anything. Fixed by making the file pure ASCII with a BOM, and added a CI-enforced guard (`lint-nsis.sh`) that fails the build on any non-ASCII in this file or `installer.nsh`
+- **1.0.6:** if port 1433 is already taken (usually a pre-existing default `MSSQLSERVER` instance), install on the next free port instead of reconfiguring or fighting for the existing one — leaves any pre-existing SQL Server completely untouched
+- **1.0.7:** the SQL Server installer was being passed `/SAPWORD=` instead of the correct `/SAPWD=` (present since the very first version, invisible until 1.0.5 let execution reach it); `Set-SaPassword`'s Integrated-auth connection now tries named pipes before TCP loopback/localhost, since TCP-loopback Integrated auth can hit NTLM restrictions on some machines — confirmed by a real "untrusted domain" login failure on the repair path
+- **Verification pattern used throughout, since no Windows or PowerShell interpreter is available in this dev environment:** encoding/brace/function-resolution checks run programmatically against the source, both NSIS lint passes, a full `electron-builder` build, and — the check that actually matters — extracting the shipped `.ps1` from inside the built `.exe`'s `app-64.7z` to confirm each fix is in the artifact a client would actually run, not just the source tree
+- **Still open:** whether a fresh install now completes end-to-end past `/SAPWD=` (nothing downstream of the installer launch has been observed on real Windows yet), and whether the named-pipes-first strategy actually resolves the repair-path NTLM failure on a real machine — reasoned from a documented pattern, not yet observed
+- Depends on: Group 6 (Tasks 20–26) — satisfied; this task closes only once a full fresh-install + repair cycle passes on real Windows with no new bugs found
 
 - Before marking a task `completed`, cross-check whether it involved a new library/architecture decision — if so, it should have gone through the quiz-before-major-changes process (see project memory) and been logged in `DECISIONS.md`.
 - If a task involved real code changes, add an entry to `FLOW.md`'s Session Change Log.

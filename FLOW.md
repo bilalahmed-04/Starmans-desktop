@@ -346,3 +346,19 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Also confirmed along the way:** code signing works (`signtool.exe` invoked against the installer with the CI certificate), and the repo going public is what makes the update feed anonymously readable at all — while private, every client's update check would have 404'd regardless of the bugs above.
 
 **Still unverified, and unchanged by any of this:** whether the installer actually *installs* on Windows — SQL Server Express provisioning, the custom NSIS password page rendering, `app-config.json` round-tripping, and the app launching afterwards. Publishing correctly and installing correctly are separate claims; only the first is now evidenced. `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` covers the second.
+
+---
+
+### Session — 2026-08-15 (continued) — Two more real bugs from real Windows testing: SAPWD and NTLM loopback auth
+
+**What changed:**
+- `Desktop_app/build/setup-sqlserver.ps1` — `/SAPWORD=` corrected to `/SAPWD=` in the SQL Server Express install arguments; `Set-SaPassword` rewritten to try three connection strategies in order (named pipes `.\$InstanceName`, TCP loopback `127.0.0.1`, TCP `localhost`) instead of a single TCP+Integrated-auth attempt, with a clear actionable error (naming the attempted Windows identity and what to check) if all three fail
+- `Desktop_app/WINDOWS_INSTALLER_VERIFICATION.md` — corrected a stale `%TEMP%` log-path reference (should have been `%ProgramData%` since the 1.0.4 fix, missed in that pass), added a check for which auth strategy succeeded, flagged repairing a genuinely foreign `SQLEXPRESS` instance as untested
+- `DECISIONS.md`, `TASKS.md` (new Task 27, consolidating the whole 1.0.4–1.0.7 real-world fix cycle into one task), `deployable/README.md` — all updated per the standing conventions
+- Version bumped to 1.0.7, built, verified (both fixes confirmed present inside the `.ps1` extracted from the built `.exe`'s `app-64.7z`), tagged, pushed — CI publish in progress as this entry is written
+
+**Why:** User tested v1.0.6 twice on a clean Windows 11 machine — a fresh install and a repair-path test (machine already had `SQLEXPRESS`/`SQLEXPRESS01`) — and both failed with real, previously-unreachable bugs, confirmed by actual logs (the SQL Server installer's own `Summary.txt`, and the PowerShell exception text) rather than guessed at.
+
+**Pattern worth naming explicitly, since it's now happened twice:** each fix has been uncovering the *next* layer, not fixing the actual last blocker. 1.0.5 fixed the encoding bug that let the script parse at all; that let execution reach the `/SAPWORD=` typo, which had been wrong since the script was first written. Fixing that will let execution reach whatever comes after it. This is expected behavior for a script that could never previously execute past its first real failure — every fix genuinely closes one gap, but "no more errors reported yet" is not equivalent to "verified working," and won't be until a full run completes on real Windows with no new error surfacing.
+
+**Not done:** a Windows retest of 1.0.7 - the fixes are verified present in the shipped artifact and reasoned correct against documented behavior (Microsoft's install-parameter reference, the standard named-pipes NTLM-loopback workaround), but not yet observed working.
