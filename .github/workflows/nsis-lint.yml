@@ -23,4 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y nsis
+      # pwsh on PATH upgrades lint-nsis.sh's PowerShell check from an
+      # encoding/brace-counting approximation to the real parser - see
+      # DECISIONS.md's 1.0.9 entry for why that distinction mattered before.
+      # ubuntu-latest already ships pwsh preinstalled, so this is normally a
+      # no-op; the explicit install is only a fallback if that image changes.
+      - run: command -v pwsh || (curl -fsSL -o /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz" && sudo mkdir -p /opt/microsoft/powershell/7 && sudo tar xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && sudo ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh)
       - run: bash Desktop_app/build/lint-nsis.sh

@@ -90,6 +90,24 @@ jobs:
           test -f latest.yml || { echo "::error::latest.yml missing — auto-update would silently break"; exit 1; }
           test -f "Starmans-Sole-House-Setup-${{ steps.ver.outputs.version }}.exe.blockmap" || { echo "::error::blockmap missing"; exit 1; }
 
+      # Everything above proves the BUILD succeeded. Nothing above has ever
+      # proven the app can actually reach a database — six releases in a row
+      # (1.0.3 through 1.0.9) shipped with real, previously-undetected bugs
+      # in this exact path (wrong installer parameter name, NTLM auth
+      # failure, a T-SQL syntax error, a BOM that crashed the whole app on
+      # startup), each found only after a human manually tested on their own
+      # Windows machine and reported back. This step runs the real
+      # setup-sqlserver.ps1 against the real bundled SQL Server Express
+      # installer, on this same windows-latest runner, and gates publishing
+      # on it actually working — installing, connecting, and surviving an
+      # update pass without losing data. See verify-sqlserver-install.ps1's
+      # own comments for what each check catches and why.
+      - name: Verify SQL Server actually installs and survives an update (real install, not a parse-check)
+        shell: pwsh
+        run: |
+          & "Desktop_app\build\verify-sqlserver-install.ps1" -ResourcesDir "Desktop_app\release\win-unpacked\resources"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # One release, created explicitly, before any upload — no race possible.
       - name: Create GitHub Release
         shell: bash

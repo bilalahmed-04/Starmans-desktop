@@ -397,3 +397,19 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Execution beats inspection - and the scratch-dir caveat.** PowerShell 7.4.6 was reinstalled per the previous session's note; `which pwsh` returning nothing does **not** mean it is unavailable here, the scratch directory simply does not persist across sessions. `ParseFile`: 0 errors, 1841 tokens. Beyond parsing, `Write-AppConfig` was pulled out of the shipping script **via its AST** and actually executed: first byte `7B`, no BOM, and the file round-trips through `ConvertFrom-Json` and Node's `JSON.parse` with a non-ASCII password intact. The real `loadProductionConfig` was likewise extracted from `main.js` by regex and run against both a BOM'd and a BOM-less config. No SQL Server was needed for any of this, so unlike the 1.0.9 T-SQL this is observed, not reasoned.
 
 **Not done:** the shipped `.exe` was never opened to confirm the fix reached the artifact - the cheap equivalent is to read `C:\Program Files\Starmans Sole House\resources\setup-sqlserver.ps1` on the target machine after installing. `deployable/` still holds an outdated `.exe`.
+
+---
+
+## Session: 1.0.11 - smaller/more-stable bundled SQL Server, and a real CI install test that gates publishing
+
+**What changed:**
+- `Desktop_app/scripts/downloadSqlServer.js` - `SQL_EXPRESS_URL` switched from SQL Server 2025 Express Core (748,772,024 bytes, ~714MB) to SQL Server 2022 Express Core (279,293,816 bytes, ~266MB), both confirmed via `curl -sIL` before switching. `MIN_SANE_BYTES` 600MB -> 250MB. Install parameters (`SAPWD`, `INSTANCENAME`, etc.) unchanged since they've been stable since SQL Server 2016 - `setup-sqlserver.ps1` itself needed no changes.
+- New `Desktop_app/build/verify-sqlserver-install.ps1` - runs the real `setup-sqlserver.ps1` against a real SQL Server Express install on the `windows-latest` CI runner: fresh install, real SQL connection, a password containing an apostrophe (1.0.9 `QUOTENAME` regression test), then the update path a second time asserting a marker row survives (direct proof updates don't wipe data) and the pinned port didn't move (1.0.9 port-walk regression test).
+- `.github/workflows/release.yml` - new step runs the above between "Verify build artifacts exist" and "Create GitHub Release", so a broken SQL path blocks publishing.
+- `.github/workflows/nsis-lint.yml` / `Desktop_app/build/lint-nsis.sh` - `lint-nsis.sh`'s PowerShell check upgraded from Python brace-counting to the real `[System.Management.Automation.Language.Parser]::ParseFile`, now covering the new script too; `nsis-lint.yml` installs `pwsh` explicitly as a fallback so this never silently degrades in CI.
+- `Desktop_app/package.json` / `package-lock.json` - 1.0.10 -> 1.0.11
+- Deleted the stale cached 748MB installer under `Desktop_app/build/sqlserver/` (gitignored, build-time cache) and re-downloaded the real 266.4MB 2022 package locally to confirm the new URL is genuine, not just a HEAD-request check.
+
+**Why:** direct request - auto-updates must never reinstall SQL Server (verified already true by re-reading `Get-ExistingInstance`'s gate, not assumed), the installer should be smaller, and it should bundle a more stable SQL Server release than 2025. SQL Server 2022 Express Core answers both the size and stability asks simultaneously with no code changes to the setup script. See `DECISIONS.md`'s 1.0.11 entry for the full reasoning, including why LocalDB was considered and rejected.
+
+**Not done:** `verify-sqlserver-install.ps1` has only been parse-checked here (`System.Data.SqlClient`/`Get-WmiObject` are Windows-only, unavailable in this dev environment) - the next tag is its first real execution. Nothing has been committed/pushed or tagged yet as of writing this entry.

@@ -63,8 +63,38 @@ if grep -qP '[^\x00-\x7F]' installer.nsh; then
   grep -nP '[^\x00-\x7F]' installer.nsh | head -10 >&2
   exit 1
 fi
-echo "  OK: setup-sqlserver.ps1 has its BOM and is pure ASCII; installer.nsh is pure ASCII"
+if grep -qP '[^\x00-\x7F]' verify-sqlserver-install.ps1; then
+  echo "ERROR: verify-sqlserver-install.ps1 contains non-ASCII characters:" >&2
+  grep -nP '[^\x00-\x7F]' verify-sqlserver-install.ps1 | head -10 >&2
+  exit 1
+fi
+echo "  OK: setup-sqlserver.ps1 has its BOM and is pure ASCII; installer.nsh and verify-sqlserver-install.ps1 are pure ASCII"
 echo
+
+# --- Real PowerShell parse-check, when pwsh is available -------------------
+# The encoding guard above proves the bytes are safe; it does not prove the
+# PowerShell is syntactically valid. Brace-counting/string-counting in Python
+# (this project's earlier substitute, before pwsh was confirmed installable
+# without root - see DECISIONS.md's 1.0.9 entry) approximates a parser; this
+# uses the actual one. Not fatal if pwsh is missing - CI installs it
+# explicitly (see nsis-lint.yml) precisely so this step is never skipped
+# there, but a developer running this locally without pwsh still gets the
+# encoding guard and the NSIS compile passes below.
+if command -v pwsh >/dev/null 2>&1; then
+  echo "=== Pass 0.5/2: PowerShell real-parser check ==="
+  for ps1 in setup-sqlserver.ps1 verify-sqlserver-install.ps1; do
+    pwsh -NoProfile -Command "
+      \$errors = \$null; \$tokens = \$null
+      [void][System.Management.Automation.Language.Parser]::ParseFile('$ps1', [ref]\$tokens, [ref]\$errors)
+      if (\$errors.Count -gt 0) { \$errors | ForEach-Object { Write-Host \$_.Message }; exit 1 }
+      Write-Host \"  OK: $ps1 (\$(\$tokens.Count) tokens)\"
+    " || { echo "ERROR: $ps1 failed to parse under real PowerShell" >&2; exit 1; }
+  done
+  echo
+else
+  echo "(pwsh not found - skipping real-parser check, only the encoding guard ran. Install pwsh for a stronger local check: https://github.com/PowerShell/PowerShell/releases)"
+  echo
+fi
 
 echo "=== Pass 1/2: installer compile (BUILD_UNINSTALLER not defined) ==="
 "$MAKENSIS" -WX nsis-lint/pass_installer.nsi
