@@ -14,6 +14,7 @@ on real Windows before — every box is a genuine unknown, not a formality.
 - [ ] Choosing a backup folder via "Browse..." works
 - [ ] Install completes without an error dialog
 - [ ] **SQL Server Express actually installed** — check Services (`services.msc`) for a service named `SQL Server (SQLEXPRESS)`, running
+- [ ] If the machine already had SQL Server: that original instance is **still running and unchanged**, and the log shows Starmans chose its own port
 - [ ] `C:\ProgramData\Starmans\app-config.json` exists
 
 ## First launch
@@ -58,5 +59,5 @@ Together these are usually enough to pinpoint the failure without a second test 
 ## Most likely failure points, in order
 
 1. **SQL Server Express silent install** — the single riskiest step; never run outside a Linux dev box
-2. **A pre-existing SQL Server instance** — if the machine already has one (especially a default `MSSQLSERVER` instance), it usually already owns port 1433, which this app's instance also needs. The log now reports existing instances and whether the port is taken.
+2. **A pre-existing SQL Server instance** — handled as of 1.0.6: the app installs its own separate instance on the next free port and leaves any existing SQL Server untouched. Worth confirming in the log which port it chose (`Using port ... instead`), and that the existing instance still works afterwards.
 3. **`app-config.json` path/permissions** — written to `%ProgramData%` by an elevated process; if the app can't read it back, login fails with a database error

@@ -124,6 +124,23 @@ function Test-PortInUse {
     } catch { return $false }
 }
 
+# Our instance does NOT have to own 1433. Nothing about this app requires the
+# default port - the app reads whatever port setup records in app-config.json
+# (main.js -> loadProductionConfig -> MSSQL_PORT), so any free port works.
+#
+# This matters because "the machine already has SQL Server" usually means a
+# default MSSQLSERVER instance that already owns 1433. Rather than fighting it
+# for the port - or reconfiguring someone else's instance, which risks breaking
+# whatever depends on it - we simply step aside onto a free port and leave
+# their existing SQL Server completely untouched.
+function Get-FreePort {
+    param([int]$Preferred = 1433, [int]$Attempts = 25)
+    for ($p = $Preferred; $p -lt ($Preferred + $Attempts); $p++) {
+        if (-not (Test-PortInUse -P $p)) { return $p }
+    }
+    throw "No free TCP port found in range $Preferred-$($Preferred + $Attempts - 1) for the SQL Server instance."
+}
+
 function Install-SqlServerExpress {
     Write-Log "No existing SQL Server instance found - installing SQL Server Express from bundled package."
     if (-not (Test-Path $InstallerPath)) {
@@ -293,19 +310,31 @@ try {
     } else {
         Write-Log "No SQL Server instances found on this machine."
     }
-    Write-Log "Port $Port already in use before setup: $(Test-PortInUse -P $Port)"
+    # Decide the port BEFORE doing anything, and never move it under an
+    # install that already exists. An already-configured machine keeps the
+    # port recorded in app-config.json - re-scanning would find that port
+    # "in use" (by our own instance) and needlessly migrate to a new one,
+    # orphaning the database the app is already pointed at.
+    if (Test-Path $ConfigPath) {
+        $existingCfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+        if ($existingCfg.mssqlPort) {
+            $Port = [int]$existingCfg.mssqlPort
+            Write-Log "Reusing port $Port from the existing app-config.json (not re-scanning - this machine is already configured)."
+        }
+    } else {
+        $requested = $Port
+        $Port = Get-FreePort -Preferred $Port
+        if ($Port -ne $requested) {
+            Write-Log "Port $requested is already in use (most likely by an existing SQL Server instance). Using port $Port instead - the app reads the port from app-config.json, so a non-default port is fully supported."
+        } else {
+            Write-Log "Port $Port is free; using it."
+        }
+    }
 
     $hasInstance = Get-ExistingInstance
     if (-not $hasInstance) {
-        # Flag the specific conflict that "SQL is already installed" usually
-        # means in practice: some OTHER instance exists (commonly the default
-        # MSSQLSERVER), which typically already owns port 1433. Installing our
-        # named instance alongside it is fine, but both cannot have the port.
         if ($allInstances.Count -gt 0) {
-            Write-Log "NOTE: instance '$InstanceName' is absent but other instances exist ($($allInstances -join ', ')). Installing '$InstanceName' alongside them."
-            if (Test-PortInUse -P $Port) {
-                Write-Log "WARNING: port $Port is already in use, most likely by one of those instances. '$InstanceName' cannot also listen on it, and this setup will probably fail verification at the end."
-            }
+            Write-Log "NOTE: instance '$InstanceName' is absent but other instances exist ($($allInstances -join ', ')). Installing '$InstanceName' alongside them on port $Port - their instances are left completely untouched."
         }
         Install-SqlServerExpress
     } else {

@@ -369,3 +369,19 @@ That explains what looked like two unrelated mysteries: the reported "SQL not de
 **Verification that actually models the failure**, rather than repeating the mistake: decode the file as both UTF-8 and CP1252 and assert the results are byte-identical. Confirmed the new file passes and - importantly - confirmed the **old committed file fails** this same test, so it demonstrably would have caught the original bug. Also re-verified against the `.ps1` extracted from inside the built v1.0.5 installer, not just the source tree.
 
 **Still not established:** whether the install now succeeds. What is established is that the script will parse, which it provably could not before - so any remaining failure will now produce logs and be diagnosable rather than silent.
+
+---
+
+## 2026-08-15 - Existing SQL Server: step aside onto a free port rather than reconfigure or compete
+
+**Decision:** When port 1433 is already taken, setup installs its own `SQLEXPRESS` instance on the next free port (scanning 1433-1457) and records that port in `app-config.json`. Any SQL Server already on the machine is left **entirely untouched** - no password reset, no auth-mode change, no service restart, no port taken from it.
+
+**Why this over the alternatives.** The user proposed reusing an existing instance instead of installing a second one, which is reasonable and would save ~714MB. But the two ways to do that both have real costs: resetting `sa` on an instance that belongs to other software can break that software, and creating a dedicated login still requires flipping the instance to mixed-mode auth and restarting it - a change to someone else's service. Choosing a different port achieves the actual goal (don't conflict, don't break anything) while touching nothing outside our own instance. It is strictly less invasive than either reuse strategy.
+
+**This works only because the port was never hardcoded.** `main.js`'s `loadProductionConfig()` reads `mssqlPort` from `app-config.json` into `MSSQL_PORT`, and `mssqlDb.js` uses it. Verified before implementing, not assumed - had the port been fixed in the app, this approach would have required application changes rather than none.
+
+**The subtle case, handled explicitly:** an already-configured machine reuses the port from its existing `app-config.json` instead of re-scanning. Re-scanning would find that port "in use" - by our own instance - and needlessly migrate to a new one, leaving the app pointed at a port with no database on it. Reinstalls and updates therefore keep their port; only genuinely fresh installs pick one.
+
+**Verification:** the branch logic was modelled and exercised across five scenarios (clean machine; 1433 taken; 1433-1435 taken; reinstall over an existing install on 1434; update path) and behaves correctly in each, including keeping the port stable on reinstall. Confirmed present in the shipped script by extracting it from inside the built installer.
+
+**What is still not addressed:** if the machine already has a `SQLEXPRESS` instance specifically, setup still reconfigures *that* instance (mixed-mode auth, `sa` password reset, restart). That path remains invasive. It is far less likely than the default-instance case, and the logs now identify which case a machine is in - so this is deliberately deferred until real evidence says it matters, rather than being designed for speculatively.

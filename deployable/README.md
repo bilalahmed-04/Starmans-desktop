@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.5.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.6.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -83,14 +83,20 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.5
+- **App version:** 1.0.6
 - **Signed:** No — this copy is built locally, and the Linux signing tool can't
   run here. The equivalent build published to GitHub Releases *is* signed
   (CI runs `signtool.exe`), so prefer the release download if you want the
   signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
   regardless — see "Installing" above.
 
-### What changed in 1.0.5
+### What changed in 1.0.6
+
+**If this machine already has SQL Server, it is left completely alone.** The
+app installs its own separate instance and, if port 1433 is already taken,
+quietly uses the next free port instead. Nothing about the existing SQL Server
+is reconfigured - no password reset, no service restart, no port stolen. The
+app records whichever port it ends up on and connects there.
 
 **The setup script now actually runs.** Up to and including 1.0.4 it never
 executed a single line: the file was UTF-8 without a byte-order mark and
