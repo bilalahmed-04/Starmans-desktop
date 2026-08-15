@@ -27,7 +27,7 @@ Everything needed to install and run the app on a Windows machine.
 4. Step through the wizard. One page is custom: it asks for
    - a **database password** (typed twice — this is for SQL Server, *not* your app login)
    - a **backup folder** (defaults to `Documents\Starmans Backup`)
-5. **Wait.** After the wizard, SQL Server Express installs silently in the background. This is the slow part — several minutes, with little visible feedback. Don't kill it.
+5. **Wait.** After the wizard, SQL Server Express installs in the background — several minutes, no visible console window (that's intentional as of 1.0.8). Watch the install page's details list for a "Setting up the database..." line. Don't kill it.
 6. Launch the app from the Start Menu or desktop shortcut.
 
 ## First launch
@@ -89,6 +89,18 @@ Releases live at:
   (CI runs `signtool.exe`), so prefer the release download if you want the
   signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
   regardless — see "Installing" above.
+
+### What changed in 1.0.8
+
+**The blank console window is gone.** 1.0.7 testing showed a real, visible
+terminal sitting blank for the entire multi-minute SQL Server install — all
+output was going to the log file, not the window, so it looked exactly like a
+hang even though it was working. That window is now hidden entirely, and the
+install page shows a "Setting up the database..." line instead.
+
+This does not fix the SQL Server install crash itself (exit code 1) reported
+during 1.0.7 testing — that's still open, pending the setup logs from the
+machine it happened on.
 
 ### What changed in 1.0.7
 
