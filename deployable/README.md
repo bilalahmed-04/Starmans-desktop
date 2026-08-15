@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.4.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.5.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -60,10 +60,9 @@ normally hidden.) Send both, plus the exact text of any error dialog.
 The second file exists because the first can't record a failure that happens
 *before* the script starts. Together they cover every case.
 
-> **Note for anyone following older instructions:** earlier versions logged to
-> `%TEMP%`, which was a mistake — the installer runs elevated, so its `%TEMP%`
-> is the *administrator's*, not yours, and the log appeared to be missing
-> entirely. Fixed in 1.0.4.
+> **If you tested an earlier build and found no logs at all:** that wasn't you
+> looking in the wrong place. Before 1.0.5 the setup script failed to parse and
+> never ran, so no log was ever written anywhere. Fixed in 1.0.5.
 
 The app still installs even if database setup fails — so it may launch and then
 fail to connect. Same root cause; the logs above are still where to look.
@@ -71,7 +70,7 @@ fail to connect. Same root cause; the logs above are still where to look.
 ## Known limitations of this specific build
 
 - **Self-signed certificate.** SmartScreen warns on first run. A real purchased certificate removes this — swapping one in is a config change, not a rebuild of the app.
-- **Not yet verified end-to-end on Windows.** Everything here was built and tested on Linux; the installer compiles correctly on a real Windows CI runner, but the actual install/run cycle on Windows hasn't been observed yet. That's exactly what `INSTALL-CHECKLIST.md` is for.
+- **Not yet verified end-to-end on Windows.** The installer wizard itself is confirmed working on real Windows (the database-password page renders and validates correctly). What has *not* yet been observed is the database setup completing — every attempt so far was blocked by the parse failure described below, so this is the first build where that step can even run. `INSTALL-CHECKLIST.md` is what to work through.
 
 ## Getting later versions
 
@@ -84,29 +83,39 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.4
+- **App version:** 1.0.5
 - **Signed:** No — this copy is built locally, and the Linux signing tool can't
   run here. The equivalent build published to GitHub Releases *is* signed
   (CI runs `signtool.exe`), so prefer the release download if you want the
   signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
   regardless — see "Installing" above.
 
-### What changed in 1.0.4
+### What changed in 1.0.5
 
-Fixes for two bugs found during the first real Windows test:
+**The setup script now actually runs.** Up to and including 1.0.4 it never
+executed a single line: the file was UTF-8 without a byte-order mark and
+contained em-dashes and box-drawing characters (in comments, of all places).
+Windows PowerShell reads such a file as ANSI, which turned each of those into
+garbage that closed string literals early — so the script failed to *parse*.
+That is also why no log ever appeared: a script that can't parse can't write
+its own log. It is now pure ASCII with a BOM, and the build refuses to proceed
+if that ever regresses.
 
-- **The bundled SQL Server installer couldn't be found.** The setup script
-  looked one directory too high, so on a machine without SQL Server already
-  present the install would fail. Verified against the real packaged layout.
-- **The log file was written somewhere you couldn't see it** (the elevated
-  installer's `%TEMP%`), which is why the first test produced no log at all.
+Fixes shipped in 1.0.4 that were written but never reached, and which take
+effect for the first time here:
 
-Plus two latent issues found while reviewing that code: SQL Server Express
-defaults to *dynamic* ports, which silently override the fixed port 1433 the
-app connects to; and the script now records what SQL Server instances already
-exist and whether port 1433 is taken, so a "SQL is already installed" conflict
-is visible in the log instead of being guesswork.
+- **The bundled SQL Server installer couldn't be found** — the script looked one
+  directory too high, which would fail on any machine without SQL Server present.
+- **Logs went somewhere unfindable** (the elevated installer's `%TEMP%`, not
+  yours). They are now in `C:\ProgramData\Starmans\`, with a second file
+  capturing failures that happen before the script can log anything itself.
+- **Dynamic ports would have silently defeated the fixed port** — SQL Server
+  Express defaults to dynamic ports, which override the 1433 the app connects
+  to. That would have looked like "setup succeeded but the app can't connect".
+- The script now records which SQL Server instances already exist and whether
+  port 1433 is taken, so an "already installed" conflict is visible rather than
+  guesswork.
 
-1.0.0–1.0.3 were not usable releases — their builds either published no
-installer at all or produced an update feed pointing at a missing file. See
+1.0.0–1.0.3 were not usable releases at all — those builds either published no
+installer or produced an update feed pointing at a missing file. See
 `DECISIONS.md` for the full history.
