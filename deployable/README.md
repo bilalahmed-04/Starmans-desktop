@@ -6,7 +6,7 @@ Everything needed to install and run the app on a Windows machine.
 
 | File | What it is |
 |---|---|
-| `Starmans-Sole-House-Setup-1.0.6.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
+| `Starmans-Sole-House-Setup-1.0.7.exe` | **The installer.** ~795MB — self-contained, nothing else to download. |
 | `INSTALL-CHECKLIST.md` | What to verify while installing, and what to capture if it fails. |
 | `README.md` | This file. |
 
@@ -70,7 +70,7 @@ fail to connect. Same root cause; the logs above are still where to look.
 ## Known limitations of this specific build
 
 - **Self-signed certificate.** SmartScreen warns on first run. A real purchased certificate removes this — swapping one in is a config change, not a rebuild of the app.
-- **Not yet verified end-to-end on Windows.** The installer wizard itself is confirmed working on real Windows (the database-password page renders and validates correctly). What has *not* yet been observed is the database setup completing — every attempt so far was blocked by the parse failure described below, so this is the first build where that step can even run. `INSTALL-CHECKLIST.md` is what to work through.
+- **Not yet verified end-to-end on Windows.** The installer wizard and the SQL Server *installer step* are both confirmed reaching real Windows now (the password page renders and validates; the bundled SQL Server installer actually launches). What's still unconfirmed is a **clean pass all the way through** — every attempt on real Windows so far hit a real bug along the way (see "What changed" below for each one and how it was fixed). `INSTALL-CHECKLIST.md` is what to work through.
 
 ## Getting later versions
 
@@ -83,12 +83,31 @@ Releases live at:
 
 ## Version
 
-- **App version:** 1.0.6
+- **App version:** 1.0.7
 - **Signed:** No — this copy is built locally, and the Linux signing tool can't
   run here. The equivalent build published to GitHub Releases *is* signed
   (CI runs `signtool.exe`), so prefer the release download if you want the
   signed one. Either way it's a *self-signed* certificate, so SmartScreen warns
   regardless — see "Installing" above.
+
+### What changed in 1.0.7
+
+Two bugs found by a real fresh-install attempt and a real repair attempt on
+Windows 11, both confirmed by actual install logs rather than reasoning:
+
+- **SQL Server Express installation failed on every fresh install** with
+  `The setting 'SAPWORD' specified is not recognized.` The setup script has
+  been passing the wrong parameter name to the SQL Server installer since it
+  was first written - the correct name is `SAPWD`. This bug existed through
+  every prior version; it only became visible once 1.0.5's encoding fix let
+  the script run far enough to reach it.
+- **Repairing a machine that already has a SQL Server instance failed** with
+  `Login failed. The login is from an untrusted domain and cannot be used
+  with Integrated authentication.` Windows Integrated auth over a TCP loopback
+  connection can hit an NTLM restriction on some machines. The script now
+  tries named pipes first (the standard workaround), then two TCP fallbacks,
+  and if all three fail it reports exactly which Windows identity was
+  attempted and what to check, instead of a raw .NET error.
 
 ### What changed in 1.0.6
 

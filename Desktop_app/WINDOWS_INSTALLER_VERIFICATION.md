@@ -69,14 +69,16 @@ This is the highest-risk, least-verified part of the whole project — genuinely
 - [ ] `sa` login is enabled with the password you typed in step 2 — test this directly, don't just trust the app: `sqlcmd -S 127.0.0.1,1433 -U sa -P <password> -Q "SELECT 1"`
 - [ ] The `starmans` database exists
 - [ ] `%ProgramData%\Starmans\app-config.json` exists and contains the right values (server/port/database/user/password/backup folder) — **confirm it's under `%ProgramData%`, not a per-user path** (`setup-sqlserver.ps1` writes here specifically so it's visible regardless of which Windows user runs the app later, unlike the old `userData`-based approach)
-- [ ] A log file exists (`%TEMP%\sqlserver-setup.log` per the script) with a readable step-by-step record
-- [ ] If anything above failed, confirm the installer surfaced a clear `MessageBox` naming the log file (`installer.nsh`'s `customInstall` failure handling), not a silent "installation complete" with a broken database underneath
+- [ ] Two log files exist, both under `C:\ProgramData\Starmans\` (**not `%TEMP%`** — an earlier version logged there, which is the *elevated installer's* temp, not the one you'd check in Explorer, and made real test failures undiagnosable): `sqlserver-setup.log` (step-by-step record) and `installer-powershell.log` (raw output, catches failures before the script can log anything itself)
+- [ ] The log names which connection strategy succeeded for the `sa`-password step — `Set-SaPassword` tries named pipes (`.\SQLEXPRESS`) first, then TCP loopback, then TCP `localhost`, because Windows Integrated auth over TCP loopback can fail with `"Login failed. The login is from an untrusted domain..."` on machines with NTLM restrictions (confirmed by a real install log) — worth noting **which** strategy worked, since a machine where only the TCP fallbacks succeed may indicate named pipes is disabled there
+- [ ] If anything above failed, confirm the installer surfaced a clear `MessageBox` naming both log files (`installer.nsh`'s `customInstall` failure handling), not a silent "installation complete" with a broken database underneath
 
 ### 3a. Repair scenario (do this on a second clean snapshot, or by deliberately breaking sa's password first)
 
 - [ ] Disable the `sa` login or change its password directly via SSMS/`sqlcmd`, then re-run the installer (or a future version's installer) over the existing install
 - [ ] The custom password page is **skipped** this time (the self-owned `HKLM\Software\Starmans\Installed` registry marker + `app-config.json` both present — see `TASKS.md` Task 21's notes on why this isn't electron-builder's own uninstall registry key)
-- [ ] `setup-sqlserver.ps1` runs with no password argument, reads the existing config, and **successfully re-enables/repairs `sa`'s access via Windows Integrated auth** even though its password was broken — this is the specific "repair a broken machine" capability the whole Windows-Integrated-auth design in the script exists for
+- [ ] `setup-sqlserver.ps1` runs with no password argument, reads the existing config, and **successfully re-enables/repairs `sa`'s access via Windows Integrated auth** even though its password was broken — this is the specific "repair a broken machine" capability the multi-strategy Integrated-auth logic in the script exists for
+- [ ] If this machine already had a *different* pre-existing `SQLEXPRESS` instance (not one Starmans installed) before the very first install: confirm the log names the Windows identity attempted and states plainly that Mixed Mode Authentication / sysadmin membership should be checked, rather than showing a raw .NET exception — this is the one repair scenario not yet exercised end-to-end (a machine with someone else's `SQLEXPRESS` instance, where our identity may genuinely lack sysadmin rights on it)
 
 ## 4. First launch — schema provisioning (`provisionDatabase.js`)
 

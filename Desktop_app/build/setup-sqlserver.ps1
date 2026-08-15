@@ -155,7 +155,13 @@ function Install-SqlServerExpress {
         '/QUIET',
         "/INSTANCENAME=$InstanceName",
         '/SECURITYMODE=SQL',
-        "/SAPWORD=$SaPassword",
+        # SAPWD, not SAPWORD - confirmed wrong by a real install log:
+        # "The setting 'SAPWORD' specified is not recognized." This was wrong
+        # from the very first version of this script and never caught until
+        # Bug 1 (the encoding failure) stopped blocking execution before this
+        # line was ever reached - every prior "successful lint/build" only
+        # proved the script COMPILED, never that this parameter was correct.
+        "/SAPWD=$SaPassword",
         '/SQLSYSADMINACCOUNTS=BUILTIN\Administrators',
         '/TCPENABLED=1'
     )
@@ -231,10 +237,54 @@ function Set-SaPassword {
     # (the current process is already elevated/admin) - this is what lets
     # this REPAIR a PC where sa is disabled or its password is unknown, since
     # integrated auth as a local admin always works regardless of sa's state.
+    #
+    # BUT: a single TCP-loopback connection string is not reliable for this.
+    # Confirmed by a real install log:
+    #   "Login failed. The login is from an untrusted domain and cannot be
+    #    used with Integrated authentication."
+    # This is a known SQL Server / Windows interaction - Integrated auth over
+    # TCP to 127.0.0.1 or localhost can fail SSPI/NTLM negotiation on machines
+    # with NTLM-restriction policies or certain loopback configurations, even
+    # though the exact same Windows identity is fully trusted locally. Named
+    # pipes/shared memory to "." (the standard local-instance connection
+    # string) bypasses that negotiation path entirely and is the documented
+    # workaround, so it is tried FIRST; TCP is kept as a fallback for the
+    # (rarer) machines where named pipes itself is disabled.
     Write-Log "Setting sa password via Windows Integrated auth..."
-    $connStr = "Server=127.0.0.1,$Port;Database=master;Integrated Security=True;Connection Timeout=10;TrustServerCertificate=True;"
-    $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
-    $conn.Open()
+
+    $strategies = @(
+        @{ Desc = "named pipes/shared memory (.\$InstanceName)"; ConnStr = "Server=.\$InstanceName;Database=master;Integrated Security=True;Connection Timeout=10;TrustServerCertificate=True;" },
+        @{ Desc = "TCP loopback (127.0.0.1,$Port)";              ConnStr = "Server=127.0.0.1,$Port;Database=master;Integrated Security=True;Connection Timeout=10;TrustServerCertificate=True;" },
+        @{ Desc = "TCP localhost ($Port)";                       ConnStr = "Server=localhost,$Port;Database=master;Integrated Security=True;Connection Timeout=10;TrustServerCertificate=True;" }
+    )
+
+    $conn = $null
+    $lastError = $null
+    foreach ($s in $strategies) {
+        try {
+            Write-Log "  Trying $($s.Desc)..."
+            $candidate = New-Object System.Data.SqlClient.SqlConnection($s.ConnStr)
+            $candidate.Open()
+            $conn = $candidate
+            Write-Log "  Connected via $($s.Desc)."
+            break
+        } catch {
+            $lastError = $_.Exception.Message
+            Write-Log "  Failed via $($s.Desc): $lastError"
+        }
+    }
+
+    if (-not $conn) {
+        # Actionable, not a raw .NET stack dump - name the identity that was
+        # tried and what to check, per the requirement that a failure here
+        # must be diagnosable without re-running with extra logging.
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        throw "Could not authenticate to SQL Server as an administrator using any connection method (tried: $(($strategies | ForEach-Object { $_.Desc }) -join '; ')). " +
+              "Attempted Windows identity: $identity. Last error: $lastError. " +
+              "Check that Mixed Mode Authentication is enabled on '$InstanceName', and that '$identity' " +
+              "(or BUILTIN\Administrators) is a member of that instance's sysadmin role."
+    }
+
     $cmd = $conn.CreateCommand()
     # Password is parameterized via sp_executesql to avoid any T-SQL
     # injection/escaping issues with special characters in the password.
