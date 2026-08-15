@@ -380,3 +380,20 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **The process finding, which matters more than either bug.** Every prior session in this sequence recorded "no PowerShell interpreter is available in this dev environment" and substituted Python parsers, `grep` and brace-counting. That assumption was never retested, and it is the same class of mistake as the 1.0.5 encoding bug this log already dissected: checking the file with *my* tools rather than the *target* interpreter. PowerShell 7.4.6 linux-x64 installs from Microsoft's GitHub release into a scratch dir with no root required. The fix was verified with the actual parser (`Parser::ParseFile` - 0 errors, 1782 tokens) and by dumping the here-string's literal value out of the token stream to prove no `$` interpolation occurred. **Future sessions should use it rather than repeating the workaround.**
 
 **Not done, and deliberately so:** the batch was not executed against a real SQL Server. Docker is installed here but its daemon isn't reachable, and spinning up `mssql/server` to run the statement for real was offered and declined in favour of the parse check. So the T-SQL is reasoned-correct against documented `QUOTENAME`/`ALTER LOGIN` behaviour, not observed working. Also not done: a rebuild - `deployable/` still holds the 1.0.8 `.exe`, which carries the `@pwd` bug.
+
+---
+
+## Session: 1.0.10 - UTF-8 BOM in app-config.json crashed the app at launch
+
+**What changed:**
+- `Desktop_app/build/setup-sqlserver.ps1`
+  - `Write-AppConfig`: `Set-Content -Encoding UTF8` replaced with `[System.IO.File]::WriteAllText(..., (New-Object System.Text.UTF8Encoding($false)))`. Windows PowerShell 5.1 writes a UTF-8 BOM for that switch and `JSON.parse` rejects the leading `U+FEFF`. `-Encoding utf8NoBOM` is PowerShell 6+, so the .NET API is the portable way to say this on stock 5.1.
+  - All three `Get-Content $ConfigPath` reads now pass `-Encoding UTF8`. Load-bearing, not cosmetic: PS 5.1 infers encoding from the BOM and falls back to ANSI without one, so removing the BOM would otherwise have corrupted non-ASCII characters in the sa password on the update path.
+- `Desktop_app/main.js` - `loadProductionConfig` strips a leading `﻿` before `JSON.parse`, and wraps the parse to report *which file* failed instead of a bare `SyntaxError` in an Electron crash dialog. The strip stays permanently: it is what lets an existing 1.0.9 install (whose config already has a BOM) recover on update.
+- `Desktop_app/package.json` - 1.0.9 -> 1.0.10
+
+**Why:** the 14:05 `sqlserver-setup.log` from the Windows machine - the first fully successful SQL setup this project has recorded. Both 1.0.9 fixes are confirmed working by observation: the port stayed at 1434 via `Get-InstanceStaticPort`, and `sa password set and login enabled` shows the `QUOTENAME`/`sp_executesql` batch executing against a real SQL Server. The app then crashed at startup on the config that same run had just written.
+
+**Execution beats inspection - and the scratch-dir caveat.** PowerShell 7.4.6 was reinstalled per the previous session's note; `which pwsh` returning nothing does **not** mean it is unavailable here, the scratch directory simply does not persist across sessions. `ParseFile`: 0 errors, 1841 tokens. Beyond parsing, `Write-AppConfig` was pulled out of the shipping script **via its AST** and actually executed: first byte `7B`, no BOM, and the file round-trips through `ConvertFrom-Json` and Node's `JSON.parse` with a non-ASCII password intact. The real `loadProductionConfig` was likewise extracted from `main.js` by regex and run against both a BOM'd and a BOM-less config. No SQL Server was needed for any of this, so unlike the 1.0.9 T-SQL this is observed, not reasoned.
+
+**Not done:** the shipped `.exe` was never opened to confirm the fix reached the artifact - the cheap equivalent is to read `C:\Program Files\Starmans Sole House\resources\setup-sqlserver.ps1` on the target machine after installing. `deployable/` still holds an outdated `.exe`.

@@ -21,7 +21,27 @@ function loadProductionConfig() {
   // (no config file yet) — Backend/.env above already covers that case.
   const configPath = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Starmans', 'app-config.json');
   if (!fs.existsSync(configPath)) return;
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  // Strip a leading UTF-8 BOM before parsing. Windows PowerShell 5.1 (which
+  // runs setup-sqlserver.ps1) writes EF BB BF for `-Encoding UTF8` — that is
+  // not optional, it is what Desktop-edition PowerShell does — and JSON.parse
+  // rejects the resulting U+FEFF with "Unexpected token", killing the whole
+  // main process at require time. Confirmed on a real 1.0.9 install where SQL
+  // setup had otherwise fully succeeded.
+  //
+  // The writer no longer emits a BOM, but this strip must STAY: it is what
+  // lets a machine already carrying a BOM'd config recover on update, without
+  // which the app would keep crashing until setup was re-run. Reading is also
+  // simply the right place to be lenient about it.
+  const raw = fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch (err) {
+    // Name the file. The default message is a bare SyntaxError in an Electron
+    // crash dialog, which tells whoever is standing at the PC nothing about
+    // which file to look at.
+    throw new Error(`Could not parse ${configPath}: ${err.message}`);
+  }
   process.env.MSSQL_SERVER = config.mssqlServer;
   process.env.MSSQL_PORT = String(config.mssqlPort);
   process.env.MSSQL_DATABASE = config.mssqlDatabase;

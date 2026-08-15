@@ -437,3 +437,29 @@ The here-string is single-quoted (`@'...'@`), not double-quoted. A double-quoted
 - the here-string's literal value dumped from the token stream and asserted to contain `DECLARE @sql`, `LEN(@pwd)`, `QUOTENAME(@pwd, '''')` and `EXEC sp_executesql @sql` verbatim - i.e. proof PowerShell did not interpolate anything
 
 **What this still does not verify, stated plainly:** the real parser confirms the script *parses*; it does not execute it. Whether SQL Server accepts this batch, and whether `sa` ends up with the right password, remains unobserved - no SQL Server is reachable from this environment (Docker is installed but its daemon is not accessible). Running SQL Server in a container to execute the batch for real was offered and declined in favour of the parse check, so the T-SQL is reasoned-correct against documented `QUOTENAME`/`ALTER LOGIN` behaviour, not observed working. The pattern named in the 1.0.7 entry therefore still holds: this fix unblocks the next layer rather than proving the install succeeds.
+
+---
+
+## 1.0.10: the UTF-8 BOM that made a fully successful install look like a total failure
+
+**The 1.0.9 fix worked.** The 14:05 log is the first end-to-end success this project has ever recorded on Windows: port kept at 1434 by the new `Get-InstanceStaticPort` (exactly the self-inflicted port walk the previous entry predicted), `sa password set and login enabled`, database created, config written, and the real sa connection verified. Both 1.0.9 fixes are now **observed working**, not reasoned-correct.
+
+The app then died at launch:
+
+```
+SyntaxError: Unexpected token '', "{
+  "m"... is not valid JSON
+    at loadProductionConfig (resources\app.asar\main.js:24:23)
+```
+
+**Root cause: `Set-Content -Encoding UTF8` on Windows PowerShell 5.1 writes a UTF-8 BOM** (`EF BB BF`). `JSON.parse` rejects the leading `U+FEFF`. `app-config.json` was correct in every respect a human reading it would check - right port, right password, valid JSON to the eye - and unreadable by the only thing that consumes it. Reproduced byte-for-byte here, error text identical to the screenshot.
+
+`-Encoding utf8NoBOM` would be the obvious fix but does not exist before PowerShell 6, and this script must run on the stock 5.1 that ships with Windows. Hence `[System.IO.File]::WriteAllText` with an explicit `UTF8Encoding($false)`.
+
+**Fixed on both sides, deliberately.** The writer stops emitting a BOM; `main.js` also strips one before parsing. The strip is not redundant belt-and-braces - it is what lets a machine **already carrying a BOM'd config** (every 1.0.9 install, including the test machine) recover on update instead of crashing until setup is re-run. Being lenient in the reader is also simply correct.
+
+**A consequence worth recording, because removing a BOM is not free.** PowerShell 5.1 infers file encoding *from the BOM* and falls back to ANSI (Windows-1252) when there is none. The three `Get-Content $ConfigPath` calls on the update path were unqualified, so dropping the BOM would have silently corrupted any non-ASCII character in the sa password - a fix introducing a subtler version of the same class of bug. All three now pass `-Encoding UTF8` explicitly.
+
+**Verified by execution, not inspection.** PowerShell 7.4.6 was reinstalled per the previous entry's guidance (it lives in a scratch dir that does not survive between sessions - `which pwsh` failing does **not** mean it is unavailable). `Parser::ParseFile`: 0 errors, 1841 tokens. Then the real `Write-AppConfig`, extracted from the shipping script via its AST rather than retyped, was **executed**: output begins `7B` (`{`), not `EF BB BF`, and the resulting file round-trips through both `ConvertFrom-Json` and Node's `JSON.parse` with a non-ASCII password intact. Unlike the T-SQL in the previous entry, this fix needed no SQL Server to verify - so it is observed working, not reasoned-correct.
+
+**Still unverified:** everything past `loadProductionConfig` - schema provisioning, `ensureDefaultAdmin`, and the login screen - has still never run on Windows. The established pattern holds: each fix unblocks the next never-reached layer.

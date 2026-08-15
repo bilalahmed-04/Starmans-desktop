@@ -361,15 +361,35 @@ function Write-AppConfig {
     # ConvertTo-Json escapes correctly by construction - do not hand-roll
     # this in NSIS, see the file header comment for why that already went
     # wrong once in the reference project.
-    $config | ConvertTo-Json | Set-Content -Path $ConfigPath -Encoding UTF8
+    #
+    # WriteAllText with an explicit BOM-less UTF8Encoding, NOT
+    # `Set-Content -Encoding UTF8`: Windows PowerShell 5.1 writes a UTF-8 BOM
+    # (EF BB BF) for that switch, and main.js's JSON.parse rejects the leading
+    # U+FEFF - "Unexpected token" - taking down the entire Electron main
+    # process at startup. That shipped in 1.0.9 and made a fully successful SQL
+    # setup look like a total failure, because the config this function wrote
+    # was unreadable by the only thing that consumes it.
+    #
+    # -Encoding utf8NoBOM would be the obvious fix but does not exist before
+    # PowerShell 6; this script must run on the stock 5.1 every Windows box
+    # ships with, so the .NET API is the portable way to express it.
+    $json = $config | ConvertTo-Json
+    [System.IO.File]::WriteAllText($ConfigPath, $json, (New-Object System.Text.UTF8Encoding($false)))
     Write-Log "Wrote $ConfigPath"
 }
 
+# Every read of $ConfigPath passes -Encoding UTF8 explicitly, and that is load
+# bearing rather than decorative: PowerShell 5.1 infers a file's encoding from
+# its BOM, and falls back to ANSI (Windows-1252) when there is none. Now that
+# Write-AppConfig deliberately writes BOM-less UTF-8 - it has to, or JSON.parse
+# rejects the file - an unqualified Get-Content would silently reinterpret any
+# non-ASCII byte in the sa password, and the update path would then hand the
+# app a password that no longer matches the one SQL Server holds.
 function Read-ExistingPassword {
     if (-not (Test-Path $ConfigPath)) {
         throw "No SaPassword argument given and no existing config at $ConfigPath to read one from - cannot proceed on the update path."
     }
-    $existing = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+    $existing = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     return $existing.mssqlPassword
 }
 
@@ -383,7 +403,7 @@ try {
     if ($isUpdate) {
         $SaPassword = Read-ExistingPassword
         if (Test-Path $ConfigPath) {
-            $existing = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+            $existing = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($existing.backupFolder) { $BackupFolder = $existing.backupFolder }
         }
     }
@@ -404,7 +424,7 @@ try {
     # "in use" (by our own instance) and needlessly migrate to a new one,
     # orphaning the database the app is already pointed at.
     if (Test-Path $ConfigPath) {
-        $existingCfg = Get-Content -Path $ConfigPath -Raw | ConvertFrom-Json
+        $existingCfg = Get-Content -Path $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($existingCfg.mssqlPort) {
             $Port = [int]$existingCfg.mssqlPort
             Write-Log "Reusing port $Port from the existing app-config.json (not re-scanning - this machine is already configured)."
