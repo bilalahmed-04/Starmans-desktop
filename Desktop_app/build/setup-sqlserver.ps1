@@ -179,9 +179,33 @@ function Install-SqlServerExpress {
         # proved the script COMPILED, never that this parameter was correct.
         "/SAPWD=$SaPassword",
         '/SQLSYSADMINACCOUNTS=BUILTIN\Administrators',
-        '/TCPENABLED=1'
+        '/TCPENABLED=1',
+        # Stops Setup reaching out to Windows/Microsoft Update to check for a
+        # newer cumulative update before installing. Found the hard way: the
+        # 1.0.11 CI release run hung for the full 6-hour GitHub Actions job
+        # ceiling with the log's last line being "installing SQL Server
+        # Express from bundled package" and nothing after - i.e. exactly this
+        # network check stalling forever with no timeout of its own. A
+        # locked-down network (this CI runner, or a client machine behind a
+        # firewall) can hit the same thing. Also makes the installed version
+        # deterministic - exactly what's bundled - rather than "whatever
+        # Microsoft Update happened to have that day."
+        '/UPDATEENABLED=0'
     )
-    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
+
+    # Belt-and-suspenders for the same failure mode: even with the update
+    # check disabled, do not let a hung installer consume an entire CI job
+    # (or a client's machine) indefinitely the way the 1.0.11 run did. A real
+    # successful install on real Windows (see DECISIONS.md's 1.0.9 entry, log
+    # timestamps 12:42:38 -> 12:52:00) took under 10 minutes; 20 is generous
+    # headroom. Failing loudly in 20 minutes beats a silent 6-hour hang with
+    # zero diagnostic information - which is what happened without this.
+    $timeoutMs = 20 * 60 * 1000
+    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $setupArgs -PassThru -NoNewWindow
+    if (-not $proc.WaitForExit($timeoutMs)) {
+        try { $proc | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+        throw "SQL Server Express installer did not finish within $($timeoutMs / 60000) minutes and was killed. It most likely hung reaching the network (Windows/Microsoft Update, or a blocked download) rather than crashing outright - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for whatever it captured before being killed."
+    }
     if ($proc.ExitCode -ne 0) {
         throw "SQL Server Express installer exited with code $($proc.ExitCode) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
     }

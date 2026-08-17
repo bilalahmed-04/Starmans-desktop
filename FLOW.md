@@ -413,3 +413,22 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Why:** direct request - auto-updates must never reinstall SQL Server (verified already true by re-reading `Get-ExistingInstance`'s gate, not assumed), the installer should be smaller, and it should bundle a more stable SQL Server release than 2025. SQL Server 2022 Express Core answers both the size and stability asks simultaneously with no code changes to the setup script. See `DECISIONS.md`'s 1.0.11 entry for the full reasoning, including why LocalDB was considered and rejected.
 
 **Not done:** `verify-sqlserver-install.ps1` has only been parse-checked here (`System.Data.SqlClient`/`Get-WmiObject` are Windows-only, unavailable in this dev environment) - the next tag is its first real execution. Nothing has been committed/pushed or tagged yet as of writing this entry.
+
+---
+
+## Session: 1.0.12 - the v1.0.11 release build hung 6 hours; SQL installer network-update check + no install timeout
+
+**What changed:**
+- `Desktop_app/build/setup-sqlserver.ps1` - `Install-SqlServerExpress`: added `/UPDATEENABLED=0` to the installer args (stops Setup checking Windows/Microsoft Update over the network before installing - the reasoned cause of the hang). Replaced `Start-Process -Wait` (no timeout) with `Start-Process -PassThru` + `$proc.WaitForExit(20 minutes)`, killing the process and throwing a clear error on timeout instead of hanging forever.
+- `.github/workflows/release.yml` - `release` job gets `timeout-minutes: 60` as a second, independent safety net for a hang anywhere else in the job.
+- `Desktop_app/package.json` - 1.0.11 -> 1.0.12. (`v1.0.11`'s tag stays where it is; it never got a published release, so nothing points at it publicly.)
+
+**Why:** the v1.0.11 release run (switch to SQL Server 2022 Express, 266MB vs 2025's 714MB) built successfully but never published - `verify-sqlserver-install.ps1`, the new "run a real install before publishing" CI gate added in that same commit, hung for the full 6-hour GitHub Actions job ceiling and got auto-cancelled. `gh release view v1.0.11` returns "release not found." This is why a test after that push still showed the old ~714MB download - nothing smaller was ever actually published.
+
+**Root cause, from the raw job log** (`gh api .../jobs/<id>/logs`, not just `gh run view`'s summary): the last line before six hours of silence is `installing SQL Server Express from bundled package` - the line immediately before `Start-Process ... -Wait` on the real Microsoft installer. The installer process itself hung; `-Wait` has no timeout, so nothing in this repo could have caught it before GitHub's own 6-hour ceiling did.
+
+**This is a reasoned fix, not a confirmed one - stated plainly, same as the 1.0.9 T-SQL entry.** Re-running to confirm the diagnosis costs another 6 hours if wrong, so the fix has two independent layers: disable the suspected cause, AND bound the wait regardless of cause. The second layer is the one that actually matters - whatever hangs next, this cause or a different one, now fails loudly in ~20 minutes instead of silently burning a 6-hour slot.
+
+**Verified by execution**, per the pattern the last two sessions established: PowerShell 7.4.6 reinstalled (scratch dir, doesn't persist between sessions). `ParseFile`: 0 errors. `Install-SqlServerExpress` extracted from the shipping script via its AST, with only the installer path/args and the 20-minute constant swapped for test-safe stand-ins (`/bin/sleep`), and actually run both ways: a fast success passes through with no exception, and a hang-past-timeout case is killed and throws within the timeout window with zero orphaned processes. `lint-nsis.sh` clean.
+
+**Not done, and cannot be done without spending real Windows CI minutes:** confirming `/UPDATEENABLED=0` is actually what was hanging. What's guaranteed either way: a repeat hang now fails fast and loud instead of silently.

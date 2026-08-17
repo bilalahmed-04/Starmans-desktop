@@ -20,6 +20,14 @@ jobs:
   release:
     needs: nsis-lint
     runs-on: windows-latest
+    # Without this, a hang anywhere in the job runs to GitHub Actions' default
+    # 6-hour ceiling before failing - exactly what happened on the v1.0.11 run,
+    # where the bundled SQL Server installer itself hung (see setup-sqlserver.ps1's
+    # own timeout on that same call for the specific fix). 60 minutes is well
+    # above every step's real observed duration (full build + real SQL install
+    # + verify has taken well under 15 minutes end to end) and turns any future
+    # hang into a fast, loud failure instead of a silent multi-hour one.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
