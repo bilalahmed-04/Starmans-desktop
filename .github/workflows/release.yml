@@ -116,6 +116,46 @@ jobs:
           & "Desktop_app\build\verify-sqlserver-install.ps1" -ResourcesDir "Desktop_app\release\win-unpacked\resources"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # SQL Setup's own Bootstrap logs are the only record of what Setup itself
+      # did, and the step above dies before anything can read them — every
+      # failure so far pointed at this directory in its error text and then
+      # threw the evidence away with the runner, which is why diagnosing the
+      # 1.0.11/1.0.12 hangs took two blind releases. Collect it on failure.
+      #
+      # Whether this directory is EMPTY is itself the diagnostic: empty means
+      # SETUP.EXE never launched (the failure is extraction, upstream of SQL
+      # Setup); populated means Setup ran and stalled inside itself.
+      - name: Collect SQL Server setup logs (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          $dest = "sqlserver-logs"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          $bootstrap = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\*\Setup Bootstrap\Log" -Directory -ErrorAction SilentlyContinue
+          if ($bootstrap) {
+            foreach ($dir in $bootstrap) {
+              Write-Host "Found Setup Bootstrap log dir: $($dir.FullName)"
+              Copy-Item $dir.FullName -Destination (Join-Path $dest "Bootstrap") -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          } else {
+            Write-Host "NO Setup Bootstrap log directory exists — SETUP.EXE almost certainly never launched."
+            "No Setup Bootstrap log directory was present on this runner." | Out-File (Join-Path $dest "NO-BOOTSTRAP-LOG.txt")
+          }
+
+          # Our own script's log, which records how far setup-sqlserver.ps1 got.
+          $ours = "$env:ProgramData\Starmans\sqlserver-setup.log"
+          if (Test-Path $ours) { Copy-Item $ours $dest -Force }
+
+      - name: Upload SQL Server setup logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlserver-setup-logs
+          path: sqlserver-logs
+          if-no-files-found: warn
+          retention-days: 14
+
       # One release, created explicitly, before any upload — no race possible.
       - name: Create GitHub Release
         shell: bash

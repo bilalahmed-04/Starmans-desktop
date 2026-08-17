@@ -157,6 +157,40 @@ function Get-InstanceStaticPort {
     return 0
 }
 
+# Run an external program with a hard timeout, killing its whole process TREE
+# on expiry. The tree part matters: the previous version called Stop-Process on
+# the handle it started, which for the SQL Server package kills only the parent
+# and leaves the setup children it spawned running - holding the install and
+# whatever files it had open, so the next attempt inherits a half-installed
+# machine rather than a clean one.
+#
+# Failing loudly on a timeout is deliberate: the 1.0.11 release hung for the
+# full 6-hour GitHub Actions ceiling with no diagnostic output at all.
+function Invoke-WithTimeout {
+    param(
+        [Parameter(Mandatory)] [string]   $FilePath,
+        # Not Mandatory: a Mandatory [string[]] rejects @() outright, which
+        # would make this helper unusable for an argument-less program.
+        [string[]] $Arguments = @(),
+        [Parameter(Mandatory)] [int]      $TimeoutMinutes,
+        [Parameter(Mandatory)] [string]   $What
+    )
+
+    # Start-Process also rejects an empty -ArgumentList, so omit it entirely.
+    $startParams = @{ FilePath = $FilePath; PassThru = $true; NoNewWindow = $true }
+    if ($Arguments.Count -gt 0) { $startParams.ArgumentList = $Arguments }
+    $proc = Start-Process @startParams
+    if (-not $proc.WaitForExit($TimeoutMinutes * 60 * 1000)) {
+        # taskkill /T walks the child tree; Stop-Process has no equivalent.
+        try { & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null } catch {}
+        throw "$What did not finish within $TimeoutMinutes minutes and was killed (process tree terminated). See %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for whatever it captured before being killed - if that log is EMPTY or absent, setup never launched and the failure is upstream of it (extraction), not inside SQL Setup."
+    }
+    if ($proc.ExitCode -ne 0) {
+        throw "$What exited with code $($proc.ExitCode) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
+    }
+    Write-Log "$What completed (exit code 0)."
+}
+
 function Install-SqlServerExpress {
     Write-Log "No existing SQL Server instance found - installing SQL Server Express from bundled package."
     if (-not (Test-Path $InstallerPath)) {
@@ -200,15 +234,38 @@ function Install-SqlServerExpress {
     # timestamps 12:42:38 -> 12:52:00) took under 10 minutes; 20 is generous
     # headroom. Failing loudly in 20 minutes beats a silent 6-hour hang with
     # zero diagnostic information - which is what happened without this.
-    $timeoutMs = 20 * 60 * 1000
-    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $setupArgs -PassThru -NoNewWindow
-    if (-not $proc.WaitForExit($timeoutMs)) {
-        try { $proc | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
-        throw "SQL Server Express installer did not finish within $($timeoutMs / 60000) minutes and was killed. It most likely hung reaching the network (Windows/Microsoft Update, or a blocked download) rather than crashing outright - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for whatever it captured before being killed."
+    # SQLEXPR_x64_ENU.exe is a self-extracting WRAPPER, not SETUP.EXE. It must be
+    # extracted first and the real SETUP.EXE invoked from the extracted media.
+    #
+    # This is what actually hung the 1.0.11 and 1.0.12 CI releases. The wrapper
+    # parses arguments before SETUP.EXE ever exists: the setup-level '/QUIET'
+    # above is NOT the extractor's quiet switch (that is '/Q'), so the wrapper
+    # saw no quiet flag, fell back to its interactive "Choose Directory For
+    # Extracted Files" dialog, and waited for a click that a headless runner can
+    # never provide. Both releases sat at exactly that point - the last log line
+    # each time was this function's own "installing..." message with nothing from
+    # SQL Setup after it, because SETUP.EXE had not been launched yet.
+    #
+    # That also explains why 1.0.12's '/UPDATEENABLED=0' changed nothing: those
+    # setup arguments were never reaching setup. They are kept (unchanged, and
+    # still correct) and are now passed to SETUP.EXE where they take effect.
+    $extractDir = Join-Path $env:TEMP "starmans-sqlexpr-extract"
+    if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+    Write-Log "Extracting bundled installer to $extractDir ..."
+    Invoke-WithTimeout -FilePath $InstallerPath -Arguments @('/Q', "/X:$extractDir") `
+        -TimeoutMinutes 10 -What 'SQL Server Express self-extractor'
+
+    $setupExe = Join-Path $extractDir 'SETUP.EXE'
+    if (-not (Test-Path $setupExe)) {
+        throw "Extraction finished but SETUP.EXE is not at $setupExe. The bundled package may not be the expected self-extracting SQLEXPR_x64_ENU.exe - check what download:sqlserver actually fetched."
     }
-    if ($proc.ExitCode -ne 0) {
-        throw "SQL Server Express installer exited with code $($proc.ExitCode) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
-    }
+
+    Write-Log "Running SETUP.EXE from extracted media..."
+    Invoke-WithTimeout -FilePath $setupExe -Arguments $setupArgs `
+        -TimeoutMinutes 20 -What 'SQL Server Express installer'
+
+    Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Log "SQL Server Express install completed (exit code 0)."
 }
 
