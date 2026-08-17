@@ -8,7 +8,10 @@ export default defineConfig({
   base: './',
   plugins: [inspectAttr(), react()],
   server: {
-    port: 3000,
+    // Electron's dev branch (main.js) loads this exact port, so fail loudly
+    // instead of drifting to 3001 when something else holds it.
+    port: 3100,
+    strictPort: true,
   },
   resolve: {
     alias: {

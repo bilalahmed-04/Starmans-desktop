@@ -4,10 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `npm run dev` — start Vite dev server (port 3000)
+- `npm run dev` — start Vite dev server (port 3100, `strictPort`; Electron's dev branch in `../../main.js` loads this port)
 - `npm run build` — type-check (`tsc -b`) then build production bundle
 - `npm run lint` — run ESLint
 - `npm run preview` — preview the production build
+
+To run the full desktop app (Vite + Electron together), use `npm run electron:dev` from
+`Desktop_app/` — **not** from this directory. It starts this dev server, waits for port
+3100 to accept connections, then launches Electron with `NODE_ENV=development`; Ctrl-C
+stops both. Running `npm run dev` here on its own only serves the UI in a browser, with
+no Electron shell and therefore no IPC/database access.
+
+Port 3100 is `strictPort`, so anything else holding it fails the run immediately rather
+than silently moving to another port (Electron loads 3100 by hardcoded default).
+
+Electron requires `Desktop_app/Backend/.env` (gitignored; copy `.env.example` and fill in
+`MSSQL_PASSWORD`) and a reachable MSSQL instance — without them it exits at startup with
+`ELOGIN`. First launch creates the `starmans` database and runs the initial migration;
+later launches skip it.
 
 There is no test suite configured in this project.
 

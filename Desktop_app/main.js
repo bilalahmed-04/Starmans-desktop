@@ -101,7 +101,9 @@ function buildMssqlConfig(database) {
 }
 
 async function registerIpcHandlers() {
-  const { connectMSSQL } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
+  // `sql` comes from mssqlDb.js's re-export, not a bare require('mssql') —
+  // mssql is a Backend/ dependency and is not resolvable from Desktop_app/.
+  const { connectMSSQL, sql } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
 
   // SQL Server itself, the sa password, and the database are all already
   // provisioned by this point — by build/setup-sqlserver.ps1 during install,
@@ -200,7 +202,7 @@ function createWindow() {
   });
 
   if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:3000');
+    win.loadURL(process.env.DEV_SERVER_URL || 'http://localhost:3100');
   } else {
     win.loadFile(path.join(__dirname, 'frontend', 'app', 'dist', 'index.html'));
   }

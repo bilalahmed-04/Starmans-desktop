@@ -6,6 +6,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "electron:dev": "concurrently -k -s first -n vite,electron -c cyan,magenta \"npm --prefix frontend/app run dev\" \"npm run electron:dev:wait\"",
+    "electron:dev:wait": "wait-on -t 60000 tcp:127.0.0.1:3100 && cross-env NODE_ENV=development electron .",
     "pack": "electron-builder --dir",
     "download:sqlserver": "node scripts/downloadSqlServer.js",
     "build:frontend": "npm --prefix frontend/app run build",
@@ -17,8 +19,11 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
     "electron": "^33.4.11",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "wait-on": "^9.1.0"
   },
   "build": {
     "appId": "com.starmans.desktop",
