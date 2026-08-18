@@ -69,7 +69,7 @@ export default function Home() {
       <div style={{ maxWidth: 860, margin: '0 auto' }}>
         {/* Welcome Header */}
         <h1 className="font-lora font-semibold" style={{ fontSize: 28, color: 'var(--dark-heading)' }}>
-          Welcome back, Bilal Ahmed
+          Welcome back, Abdul Aziz
         </h1>
         <p className="font-inter" style={{ fontSize: 13, color: 'var(--secondary-text)', marginTop: 6 }}>
           {dateTimeLabel}
