@@ -432,3 +432,21 @@ NewSalePage confirm → lib/slips.ts createSlip() → window.api.slips.create(pa
 **Verified by execution**, per the pattern the last two sessions established: PowerShell 7.4.6 reinstalled (scratch dir, doesn't persist between sessions). `ParseFile`: 0 errors. `Install-SqlServerExpress` extracted from the shipping script via its AST, with only the installer path/args and the 20-minute constant swapped for test-safe stand-ins (`/bin/sleep`), and actually run both ways: a fast success passes through with no exception, and a hang-past-timeout case is killed and throws within the timeout window with zero orphaned processes. `lint-nsis.sh` clean.
 
 **Not done, and cannot be done without spending real Windows CI minutes:** confirming `/UPDATEENABLED=0` is actually what was hanging. What's guaranteed either way: a repeat hang now fails fast and loud instead of silently.
+
+---
+
+## Session: real database backups (automatic hourly + manual to external drive)
+
+**What changed:**
+- New `Desktop_app/Backend/src/services/backup.js` - `backupToPrimaryFolder()` (automatic) and `backupToExternalFolder()` (manual) both run native T-SQL `BACKUP DATABASE ... TO DISK` via the existing `mssql` pool, path passed as a bound parameter. The external path backs up into a fixed local staging folder first, then `fs.copyFile`s the result to wherever the user picked, then deletes the staging copy.
+- `Desktop_app/main.js` - `loadProductionConfig()` now also reads `backupFolder` into `process.env.BACKUP_FOLDER`. New `startBackupSchedule()` runs `backupToPrimaryFolder` every hour via `setInterval`, logging every attempt (success or failure) to `C:\ProgramData\Starmans\backup.log`, never a dialog. Two new IPC handlers: `backup:selectExternalFolder` (wraps `dialog.showOpenDialog`) and `backup:runExternal`.
+- `Desktop_app/preload.js` / `Desktop_app/frontend/app/src/types/window.d.ts` - exposed `window.api.backup.{selectExternalFolder, runExternal}`.
+- `Desktop_app/frontend/app/src/pages/SettingsPage.tsx` - new "Database Backup" card with a "Backup to External Drive..." button (folder picker -> runs backup -> shows the saved path or an error).
+- `Desktop_app/build/setup-sqlserver.ps1` - new `Grant-BackupFolderAccess` (via `icacls`) grants the SQL Server service account (`NT SERVICE\MSSQL$SQLEXPRESS`) write access to both the primary backup folder and a new fixed staging folder (`%ProgramData%\Starmans\backup-staging`), called from `Write-AppConfig` on every install/update. Non-fatal if it fails (e.g. non-NTFS media).
+- `Desktop_app/build/installer.nsh` - new `StarmansDefaultBackupPath` pre-fills the backup-folder field with the first available drive D:-H: instead of always defaulting to `Documents`, so the suggested default isn't on the same drive as the app/OS. The Browse button is unchanged.
+- `deployable/README.md` - documented the new default and added a "Backups" section pointing at `backup.log` and the Settings button.
+- `DECISIONS.md` - full reasoning for the staging-then-copy design (2026-08-18 entry).
+
+**Why:** direct request. The installer had collected a `backupFolder` since 1.0.9 but nothing ever used it - this is the feature that actually backs the database up. Interval was 10 minutes in the first ask, then 1 hour in a follow-up; 1 hour is what shipped. "Different drive than C:" and "any USB drive, user browses to it" were both explicit requirements, which is what drove the staging-folder design - the SQL Server service account can't be given write access to a drive letter that doesn't exist yet at install time.
+
+**Not done:** no retention/rotation of old `.bak` files (unbounded growth - explicitly deferred, "currently later we will change"); no in-app way to change the *automatic* backup folder after install (only the manual/external path has a picker - the automatic path still uses whatever the installer collected). **Unverified on real Windows** - no Windows/SQL Server environment in this dev sandbox. Frontend typechecks clean (`tsc -b`) and both `main.js` and `backup.js` pass Node's own syntax/import checks, but the `icacls` grant and the actual `BACKUP DATABASE` execution have only been read-reviewed, never run for real.

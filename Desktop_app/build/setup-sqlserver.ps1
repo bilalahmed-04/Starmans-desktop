@@ -47,6 +47,13 @@ $ErrorActionPreference = 'Stop'
 $ConfigDir = "$env:ProgramData\Starmans"
 $ConfigPath = "$ConfigDir\app-config.json"
 
+# Fixed, ProgramData-based staging area for the manual "backup to external
+# drive" feature (Backend/src/services/backup.js) - always this same path
+# regardless of what $BackupFolder is, so the icacls grant below only ever
+# has to target two known-stable locations instead of every USB drive a
+# user might browse to later.
+$StagingFolder = "$ConfigDir\backup-staging"
+
 # Log to a FIXED, machine-wide path - never $env:TEMP. The installer runs
 # elevated, so its %TEMP% is the *administrator's* temp (frequently
 # C:\Windows\Temp), not the %TEMP% the logged-in user sees in Explorer. The
@@ -532,10 +539,44 @@ function New-StarmansDatabase {
     }
 }
 
+# BACKUP DATABASE runs inside the SQL Server service process, not this
+# script - so the service's own Windows identity (a per-instance virtual
+# service account, NOT the admin running this installer) needs write
+# permission on wherever the backup file lands. Without this grant, every
+# scheduled/manual backup fails with an "Operating system error 5(Access is
+# denied.)" the moment Backend/src/services/backup.js's BACKUP DATABASE runs
+# - permissions "New-Item -Force" alone does not confer.
+#
+# icacls, not Set-Acl: works uniformly across drive types, and is the
+# documented approach in Microsoft's own SQL Server backup-folder guidance.
+# Failure here is logged but non-fatal - not every target is NTFS. FAT32/
+# exFAT (common on the small USB sticks this app can also target once a
+# folder is browsed to) have no ACL concept at all, so icacls errors out
+# there, but SQL Server can still write freely since nothing is restricting
+# it in the first place; only a genuine NTFS permission problem should ever
+# actually block a backup, and that surfaces later as a clear "Access is
+# denied" from BACKUP DATABASE itself, not as a silent setup failure here.
+function Grant-BackupFolderAccess {
+    param([string]$FolderPath)
+    $serviceAccount = "NT SERVICE\MSSQL`$$InstanceName"
+    try {
+        New-Item -ItemType Directory -Path $FolderPath -Force | Out-Null
+        $result = & icacls.exe "$FolderPath" /grant "${serviceAccount}:(OI)(CI)M" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "NOTE: icacls could not grant $serviceAccount write access to $FolderPath (exit $LASTEXITCODE): $result. Harmless on non-NTFS media (FAT32/exFAT); a real problem will surface as an 'Access is denied' error from the backup itself."
+        } else {
+            Write-Log "Granted $serviceAccount write access to $FolderPath."
+        }
+    } catch {
+        Write-Log "NOTE: could not grant $serviceAccount access to $FolderPath: $($_.Exception.Message)"
+    }
+}
+
 function Write-AppConfig {
     param([string]$Password)
     New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
-    New-Item -ItemType Directory -Path $BackupFolder -Force | Out-Null
+    Grant-BackupFolderAccess -FolderPath $BackupFolder
+    Grant-BackupFolderAccess -FolderPath $StagingFolder
     $config = @{
         mssqlServer   = "127.0.0.1"
         mssqlPort     = $Port

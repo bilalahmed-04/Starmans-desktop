@@ -67,6 +67,10 @@ declare global {
         check: () => Promise<IpcResult<{ currentVersion: string; availableVersion: string; updateAvailable: boolean }>>;
         install: () => Promise<IpcResult<void>>;
       };
+      backup: {
+        selectExternalFolder: () => Promise<IpcResult<string | null>>;
+        runExternal: (destinationFolder: string) => Promise<IpcResult<{ fileName: string; filePath: string }>>;
+      };
     };
   }
 }

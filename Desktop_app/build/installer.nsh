@@ -71,6 +71,30 @@
   Var ProgramDataDir
   Var AppConfigPath
 
+  ; Suggests a drive other than the one Windows/this app is installed on, so
+  ; a single drive failure can't take out both the live database and every
+  ; backup of it at once. Checks the common cases (D: through H:) rather than
+  ; enumerating all 26 letters - NSIS has no easy string-building loop without
+  ; the System plugin, and this is only ever a *suggested* default; the
+  ; Browse button (below) lets the user pick anything else, including a USB
+  ; drive plugged in after the installer starts. Falls back to
+  ; $DOCUMENTS\Starmans Backup if no other drive is present (e.g. a
+  ; single-drive machine).
+  Function StarmansDefaultBackupPath
+    StrCpy $0 "$DOCUMENTS\Starmans Backup"
+    ${If} ${FileExists} "D:\*.*"
+      StrCpy $0 "D:\Starmans Backup"
+    ${ElseIf} ${FileExists} "E:\*.*"
+      StrCpy $0 "E:\Starmans Backup"
+    ${ElseIf} ${FileExists} "F:\*.*"
+      StrCpy $0 "F:\Starmans Backup"
+    ${ElseIf} ${FileExists} "G:\*.*"
+      StrCpy $0 "G:\Starmans Backup"
+    ${ElseIf} ${FileExists} "H:\*.*"
+      StrCpy $0 "H:\Starmans Backup"
+    ${EndIf}
+  FunctionEnd
+
   Function StarmansDbPage
     ; NSIS has no built-in $COMMONPROGRAMDATA constant (unlike $APPDATA,
     ; which is per-user) - %ProgramData% must be read from the environment.
@@ -109,7 +133,8 @@
 
     ${NSD_CreateLabel} 0 92u 100% 12u "Backup Folder:"
     Pop $Label
-    ${NSD_CreateText} 0 104u 80% 14u "$DOCUMENTS\Starmans Backup"
+    Call StarmansDefaultBackupPath
+    ${NSD_CreateText} 0 104u 80% 14u "$0"
     Pop $BackupFolderInput
     ${NSD_CreateBrowseButton} 82% 104u 18% 14u "Browse..."
     Pop $BackupFolderBrowseButton

@@ -47,6 +47,27 @@ function loadProductionConfig() {
   process.env.MSSQL_DATABASE = config.mssqlDatabase;
   process.env.MSSQL_USER = config.mssqlUser;
   process.env.MSSQL_PASSWORD = config.mssqlPassword;
+  process.env.BACKUP_FOLDER = config.backupFolder || '';
+}
+
+// Fixed staging area for the manual "backup to external drive" action - see
+// Backend/src/services/backup.js and setup-sqlserver.ps1's Grant-BackupFolderAccess
+// for why this has to be a stable, pre-known path rather than wherever the
+// user browses to.
+function backupStagingFolder() {
+  return path.join(process.env.ProgramData || 'C:\\ProgramData', 'Starmans', 'backup-staging');
+}
+
+const BACKUP_LOG_PATH = path.join(process.env.ProgramData || 'C:\\ProgramData', 'Starmans', 'backup.log');
+
+function logBackupEvent(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  try {
+    fs.appendFileSync(BACKUP_LOG_PATH, line);
+  } catch {
+    // Best-effort logging only - a failure to write the log must never be
+    // what takes down an hourly background job.
+  }
 }
 
 const BACKEND_SRC = path.join(__dirname, 'Backend', 'src');
@@ -103,7 +124,7 @@ function buildMssqlConfig(database) {
 async function registerIpcHandlers() {
   // `sql` comes from mssqlDb.js's re-export, not a bare require('mssql') —
   // mssql is a Backend/ dependency and is not resolvable from Desktop_app/.
-  const { connectMSSQL, sql } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
+  const { connectMSSQL, getPool, sql } = await import(toFileUrl(path.join(BACKEND_SRC, 'mssqlDb.js')));
 
   // SQL Server itself, the sa password, and the database are all already
   // provisioned by this point — by build/setup-sqlserver.ps1 during install,
@@ -132,6 +153,7 @@ async function registerIpcHandlers() {
   const payments = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'payments.js')));
   const profit = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'profit.js')));
   const updates = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'updates.js')));
+  const backup = await import(toFileUrl(path.join(BACKEND_SRC, 'services', 'backup.js')));
 
   // A fresh install has an empty Settings table and no UI path to create the
   // first account, so seed one here (idempotent — never touches an existing
@@ -187,6 +209,48 @@ async function registerIpcHandlers() {
   // rules this wraps.
   ipcMain.handle('updates:check', wrap(() => updates.checkForUpdate({ app, autoUpdater })));
   ipcMain.handle('updates:install', wrap(() => updates.installUpdate({ autoUpdater })));
+
+  // backup:* — the automatic hourly backup (see startBackupSchedule below)
+  // runs silently in the background; these two handlers are only the manual
+  // "pick a drive and back up right now" path from Settings.
+  ipcMain.handle('backup:selectExternalFolder', wrap(async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  }));
+  ipcMain.handle('backup:runExternal', wrap((destinationFolder) => backup.backupToExternalFolder({
+    getPool,
+    sql,
+    database: process.env.MSSQL_DATABASE,
+    stagingFolder: backupStagingFolder(),
+    destinationFolder,
+  })));
+
+  startBackupSchedule({ backup, sql, getPool });
+}
+
+// Automatic backup, every hour on the hour of app uptime, to the folder
+// collected during install (process.env.BACKUP_FOLDER). Deliberately silent
+// on both success and failure — a background job that pops a dialog every
+// hour would train the user to dismiss it without reading it. Every attempt
+// (success or failure) is still recorded in backup.log so a failure is
+// diagnosable without having to reproduce it live.
+const BACKUP_INTERVAL_MS = 60 * 60 * 1000;
+
+function startBackupSchedule({ backup, sql, getPool }) {
+  setInterval(async () => {
+    try {
+      const { fileName } = await backup.backupToPrimaryFolder({
+        getPool,
+        sql,
+        database: process.env.MSSQL_DATABASE,
+        backupFolder: process.env.BACKUP_FOLDER,
+      });
+      logBackupEvent(`Automatic backup succeeded: ${fileName}`);
+    } catch (err) {
+      logBackupEvent(`Automatic backup FAILED: ${err.message}`);
+    }
+  }, BACKUP_INTERVAL_MS);
 }
 
 function createWindow() {

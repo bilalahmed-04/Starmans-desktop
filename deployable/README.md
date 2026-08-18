@@ -26,7 +26,7 @@ Everything needed to install and run the app on a Windows machine.
 3. **SmartScreen will warn you** ("Windows protected your PC"). This build is signed with a *self-signed* certificate, which Windows doesn't recognise as a trusted authority. Click **More info** → **Run anyway**. This is expected — see "Known limitations" below.
 4. Step through the wizard. One page is custom: it asks for
    - a **database password** (typed twice — this is for SQL Server, *not* your app login)
-   - a **backup folder** (defaults to `Documents\Starmans Backup`)
+   - a **backup folder** (defaults to `Starmans Backup` on the first non-system drive found, e.g. `D:\Starmans Backup` — falls back to `Documents\Starmans Backup` on a single-drive machine)
 5. **Wait.** After the wizard, SQL Server Express installs in the background — several minutes, no visible console window (that's intentional as of 1.0.8). Watch the install page's details list for a "Setting up the database..." line. Don't kill it.
 6. Launch the app from the Start Menu or desktop shortcut.
 
@@ -44,6 +44,11 @@ The login screen shows a banner reminding you of this. **Change the password imm
 Two different passwords are involved, which is easy to confuse:
 - The **database password** you typed during install — used internally by the app, you'll rarely need it again (keep it somewhere safe for reinstalls)
 - The **app login** (`admin`/`admin`) — what you type to sign in each day
+
+## Backups
+
+- **Automatic:** every hour, while the app is running, a full database backup (`.bak`) is written to the backup folder chosen during install (`C:\ProgramData\Starmans\app-config.json` records where — look for `backupFolder`). Silent by design; check `C:\ProgramData\Starmans\backup.log` to confirm it's running or to diagnose a failure.
+- **Manual, to a USB drive or any other folder:** Settings → Database Backup → "Backup to External Drive...". Runs a fresh backup on the spot and saves it wherever you browse to.
 
 ## If the install fails
 

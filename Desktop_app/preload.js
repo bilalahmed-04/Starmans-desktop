@@ -60,4 +60,8 @@ contextBridge.exposeInMainWorld('api', {
     check: () => ipcRenderer.invoke('updates:check'),
     install: () => ipcRenderer.invoke('updates:install'),
   },
+  backup: {
+    selectExternalFolder: () => ipcRenderer.invoke('backup:selectExternalFolder'),
+    runExternal: (destinationFolder) => ipcRenderer.invoke('backup:runExternal', destinationFolder),
+  },
 });
