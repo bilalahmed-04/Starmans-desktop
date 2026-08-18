@@ -568,7 +568,7 @@ function Grant-BackupFolderAccess {
             Write-Log "Granted $serviceAccount write access to $FolderPath."
         }
     } catch {
-        Write-Log "NOTE: could not grant $serviceAccount access to $FolderPath: $($_.Exception.Message)"
+        Write-Log "NOTE: could not grant $serviceAccount access to ${FolderPath}: $($_.Exception.Message)"
     }
 }
 
