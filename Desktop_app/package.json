@@ -1,6 +1,6 @@
 {
   "name": "starmans-desktop",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Starmans Sole House \u2014 Electron desktop app (main process + IPC layer wrapping Backend/ and frontend/app/)",
   "private": true,
   "main": "main.js",
