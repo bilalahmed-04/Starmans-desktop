@@ -437,16 +437,99 @@ EXEC sp_executesql @sql;
     Write-Log "sa password set and login enabled."
 }
 
+# ExecuteScalar, with SQL's NULL normalised to PowerShell's $null. Without
+# this, [DBNull]::Value is a non-null object and every `-ne $null` test on a
+# NULL result silently reports "not null" - the opposite of the truth.
+function Invoke-Scalar {
+    param($Connection, [string]$Sql)
+    $cmd = $Connection.CreateCommand()
+    $cmd.CommandText = $Sql
+    $result = $cmd.ExecuteScalar()
+    if ($result -is [System.DBNull]) { return $null }
+    return $result
+}
+
+function Invoke-NonQuery {
+    param($Connection, [string]$Sql)
+    $cmd = $Connection.CreateCommand()
+    $cmd.CommandText = $Sql
+    $cmd.ExecuteNonQuery() | Out-Null
+}
+
 function New-StarmansDatabase {
     Write-Log "Ensuring database '$DatabaseName' exists..."
     $connStr = "Server=127.0.0.1,$Port;Database=master;User Id=sa;Password=$SaPassword;Connection Timeout=10;TrustServerCertificate=True;"
     $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
     $conn.Open()
-    $cmd = $conn.CreateCommand()
-    $cmd.CommandText = "IF DB_ID('$DatabaseName') IS NULL CREATE DATABASE [$DatabaseName];"
-    $cmd.ExecuteNonQuery() | Out-Null
-    $conn.Close()
-    Write-Log "Database '$DatabaseName' present."
+    try {
+        if ((Invoke-Scalar $conn "SELECT DB_ID('$DatabaseName')") -ne $null) {
+            Write-Log "Database '$DatabaseName' present."
+            return
+        }
+
+        # DB_ID is NULL, but that does NOT mean there is nothing on disk. A
+        # plain CREATE DATABASE here is what wedged a real machine
+        # permanently:
+        #   "Cannot create file '...\DATA\starmans.mdf' because it already
+        #    exists. CREATE DATABASE failed."
+        # Uninstalling SQL Server LEAVES the data files behind, so after a
+        # reinstall the new instance has no 'starmans' registered while the
+        # previous installation's starmans.mdf is still sitting in its default
+        # data directory. Every subsequent run then failed identically, with no
+        # way out, because the check and the failure disagreed about what
+        # "exists" means.
+        #
+        # Those files are the user's data, so ATTACH them rather than creating
+        # over them - this is a recovery path, not just an error to dodge.
+        $dataDir = Invoke-Scalar $conn "SELECT CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultDataPath'))"
+        $logDir  = Invoke-Scalar $conn "SELECT CONVERT(nvarchar(4000), SERVERPROPERTY('InstanceDefaultLogPath'))"
+        if (-not $dataDir) {
+            # SERVERPROPERTY's default-path properties are SQL 2012+; fall back
+            # to where master actually lives on older builds.
+            $dataDir = Invoke-Scalar $conn "SELECT LEFT(physical_name, LEN(physical_name) - CHARINDEX('\', REVERSE(physical_name))) + '\' FROM sys.master_files WHERE database_id = 1 AND type = 0"
+        }
+        if (-not $logDir) { $logDir = $dataDir }
+
+        $mdf = Join-Path $dataDir "$DatabaseName.mdf"
+        $ldf = Join-Path $logDir  "${DatabaseName}_log.ldf"
+
+        if (Test-Path -LiteralPath $mdf) {
+            Write-Log "Database '$DatabaseName' is not registered on this instance, but $mdf exists on disk (left behind by a previous SQL Server installation). Attaching it instead of creating a new one, to preserve the data."
+            # Doubling single quotes is the T-SQL string escape; these paths are
+            # server-derived, but the DDL cannot be parameterised so escape anyway.
+            $mdfLit = $mdf.Replace("'", "''")
+            $ldfLit = $ldf.Replace("'", "''")
+            try {
+                if (Test-Path -LiteralPath $ldf) {
+                    Invoke-NonQuery $conn "CREATE DATABASE [$DatabaseName] ON (FILENAME = N'$mdfLit'), (FILENAME = N'$ldfLit') FOR ATTACH;"
+                } else {
+                    # No log file to attach - SQL Server can build a fresh one.
+                    Write-Log "  Log file $ldf is missing; attaching with ATTACH_REBUILD_LOG."
+                    Invoke-NonQuery $conn "CREATE DATABASE [$DatabaseName] ON (FILENAME = N'$mdfLit') FOR ATTACH_REBUILD_LOG;"
+                }
+                Write-Log "Attached existing '$DatabaseName' data files - previous data preserved."
+                return
+            } catch {
+                # Corrupt, version-incompatible, or in-use files. Do not leave
+                # setup permanently stuck: move them aside (never delete - they
+                # may be the only copy of the user's data) and start clean.
+                Write-Log "  WARNING: attach failed: $($_.Exception.Message)"
+                $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
+                foreach ($orphan in @($mdf, $ldf)) {
+                    if (Test-Path -LiteralPath $orphan) {
+                        $moved = "$orphan.orphaned-$stamp"
+                        Move-Item -LiteralPath $orphan -Destination $moved -Force
+                        Write-Log "  Moved $orphan aside to $moved (kept, not deleted)."
+                    }
+                }
+            }
+        }
+
+        Invoke-NonQuery $conn "IF DB_ID('$DatabaseName') IS NULL CREATE DATABASE [$DatabaseName];"
+        Write-Log "Database '$DatabaseName' present."
+    } finally {
+        $conn.Close()
+    }
 }
 
 function Write-AppConfig {
