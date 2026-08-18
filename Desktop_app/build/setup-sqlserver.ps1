@@ -291,15 +291,30 @@ function Set-SqlServerConfig {
     # TCP/IP enabled + pinned to the requested port, via the SQL Server
     # Configuration Manager WMI provider (version varies by SQL release -
     # try known namespaces).
-    $wmiNamespace = Get-WmiObject -Namespace root\Microsoft\SqlServer -Class __NAMESPACE -ErrorAction SilentlyContinue |
+    # CIM, not Get-WmiObject. Get-WmiObject does not exist natively in
+    # PowerShell 7: PS7 satisfies the call through the Windows PowerShell
+    # Compatibility feature, which runs it in a background 5.1 session and
+    # returns objects across a serialization boundary. Those come back as
+    # `Deserialized.System.Management.ManagementObject` - property bags with
+    # NO methods - so `.SetEnable()` throws "does not contain a method named
+    # 'SetEnable'". That is exactly how the v1.0.13 release failed, and it is
+    # a real 7-vs-5.1 difference, not a CI quirk: under 5.1 (which is what
+    # runs on a client during install) the identical code works, which is why
+    # 1.0.9's real install succeeded and no earlier CI run reached this line
+    # to expose it - setup itself had always died first.
+    #
+    # Get-CimInstance/Invoke-CimMethod exist in BOTH 5.1 (since PS 3.0) and 7
+    # and never serialize, so this path now behaves identically in the
+    # installer and in CI.
+    $wmiNamespace = Get-CimInstance -Namespace root\Microsoft\SqlServer -ClassName __NAMESPACE -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'ComputerManagement*' } | Select-Object -First 1
     if ($wmiNamespace) {
         $ns = "root\Microsoft\SqlServer\$($wmiNamespace.Name)"
-        $tcp = Get-WmiObject -Namespace $ns -Class ServerNetworkProtocol -ErrorAction SilentlyContinue |
+        $tcp = Get-CimInstance -Namespace $ns -ClassName ServerNetworkProtocol -ErrorAction SilentlyContinue |
             Where-Object { $_.InstanceName -eq $InstanceName -and $_.ProtocolName -eq 'Tcp' }
         if ($tcp) {
-            $tcp.SetEnable() | Out-Null
-            $props = Get-WmiObject -Namespace $ns -Class ServerNetworkProtocolProperty -ErrorAction SilentlyContinue |
+            Invoke-CimMethod -InputObject $tcp -MethodName SetEnable | Out-Null
+            $props = Get-CimInstance -Namespace $ns -ClassName ServerNetworkProtocolProperty -ErrorAction SilentlyContinue |
                 Where-Object { $_.InstanceName -eq $InstanceName -and $_.IPAddressName -eq 'IPAll' }
 
             # Setting TcpPort alone is NOT enough, and this is the classic
@@ -310,15 +325,23 @@ function Set-SqlServerConfig {
             # to 1433 and failed. Clearing it is what actually pins the port.
             $dynamic = $props | Where-Object { $_.PropertyName -eq 'TcpDynamicPorts' }
             if ($dynamic) {
-                $dynamic.SetStringValue("") | Out-Null
+                # SetStringValue's parameter is named StrValue; Invoke-CimMethod
+                # requires arguments by name, unlike the positional WMI call.
+                Invoke-CimMethod -InputObject $dynamic -MethodName SetStringValue -Arguments @{ StrValue = '' } | Out-Null
                 Write-Log "Cleared TcpDynamicPorts (was '$($dynamic.PropertyStrVal)') so the static port takes effect."
             }
 
             $static = $props | Where-Object { $_.PropertyName -eq 'TcpPort' }
             if ($static) {
-                $static.SetStringValue("$Port") | Out-Null
+                Invoke-CimMethod -InputObject $static -MethodName SetStringValue -Arguments @{ StrValue = "$Port" } | Out-Null
                 Write-Log "Pinned TcpPort to $Port."
             }
+        } else {
+            # Say so rather than skipping in silence: without this, a missing
+            # Tcp protocol object left TCP/IP disabled and the only symptom was
+            # the post-setup connection check failing with a generic
+            # "server was not found or was not accessible" much later.
+            Write-Log "WARNING: no Tcp ServerNetworkProtocol object found for instance '$InstanceName' in $ns - TCP/IP was NOT enabled and the connection check below will fail."
         }
     } else {
         Write-Log "WARNING: could not locate SQL Server Configuration Manager WMI namespace - TCP/IP config may need manual verification."
