@@ -498,3 +498,19 @@ Three separate asks from the project owner in one message, after 1.0.10 shipped:
 **Still unverified, and cannot be verified without spending real Windows CI minutes:** whether `/UPDATEENABLED=0` actually stops the hang, i.e. whether the diagnosis is correct. What is now guaranteed regardless: if it hangs again, v1.0.12's release job fails in ~20 minutes with a clear message, not silently in 6 hours with none.
 
 **`v1.0.11`'s tag is left in place, not moved.** It points at a real commit whose build succeeded but which never got a published release - force-moving a pushed tag wasn't judged worth the risk for a tag with no public assets attached to it. `v1.0.12` is the tag that actually ships the SQL 2022 switch plus this fix.
+
+## 2026-08-18 — Auto-update: disable `verifyUpdateCodeSignature`, keep signing the installers
+
+**Decision:** `Desktop_app/package.json`'s `build.win` sets `verifyUpdateCodeSignature: false`. Installers are still signed with the self-signed certificate exactly as before; only `electron-updater`'s *publisher-identity* check on a downloaded update is switched off.
+
+**Why:** This is the cost that the 2026-08-13 auto-update entry above flagged as "a future cost to budget for", arriving. A real 1.0.17 install downloaded the update and refused it:
+
+> `"Status": 1, "StatusMessage": "A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider"`
+
+The signature itself is valid — signtool works, and `Issuer` equals `Subject` (`C=PK, O=Starmans, CN=Starmans Sole House`), which is what self-signed means. `electron-updater` requires a chain terminating in a root Windows trusts, and a self-signed root is not in the Trusted Root store, so no self-signed certificate can ever satisfy this check. Signing more correctly would not have helped; the check and the chosen certificate are fundamentally incompatible.
+
+**What is and is not lost:** download integrity is still enforced — `electron-updater` verifies the downloaded installer's sha512 against `latest.yml`, over HTTPS from GitHub Releases, so a corrupted or substituted file is still rejected. What is given up is publisher-identity verification of the update binary. Given the certificate is self-signed and therefore attests to no externally-verified identity in the first place, that check was providing far less than its name suggests here.
+
+**Alternatives considered:** Add the self-signed certificate to each client machine's Trusted Root store from the NSIS installer (`certutil -addstore Root`) — rejected: it makes anything signed with that key trusted machine-wide, a broader trust expansion than the problem warrants, and it cannot help a machine already running 1.0.17 without a reinstall. Buy an OV/EV code-signing certificate (~$200-400/yr, now requiring a hardware token or cloud HSM) — the real fix, and still the eventual one: it would restore this check *and* remove SmartScreen warnings. Deferred on cost and lead time, and per the code-signing entry above the swap remains two GitHub secrets, not a rewrite.
+
+**Not covered by CI:** no automated gate exercises the updater's verification path — `verify-sqlserver-install.ps1` covers SQL Server setup only, and nothing in the pipeline performs an app-to-app update. This was found by a human clicking "Check for Updates" and can only be re-verified the same way.
