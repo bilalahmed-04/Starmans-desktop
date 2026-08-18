@@ -209,10 +209,10 @@ export default function AppLayout({ children, pageTitle, headerAction }: AppLayo
               className="flex items-center justify-center rounded-full flex-shrink-0"
               style={{ width: 36, height: 36, background: 'var(--brand-gold)' }}
             >
-              <span className="font-inter font-semibold text-xs" style={{ color: 'var(--brand-navy)' }}>AA</span>
+              <span className="font-inter font-semibold text-xs" style={{ color: 'var(--brand-navy)' }}>BA</span>
             </div>
             <div className="flex-1 text-left">
-              <div className="text-white font-semibold text-sm">Abdul Aziz</div>
+              <div className="text-white font-semibold text-sm">Bilal Ahmed</div>
               <div style={{ color: 'var(--brand-gold)', fontSize: '11px' }}>Administrator</div>
             </div>
             <ChevronDown
