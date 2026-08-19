@@ -213,11 +213,19 @@ async function registerIpcHandlers() {
   // backup:* — the automatic hourly backup (see startBackupSchedule below)
   // runs silently in the background; these two handlers are only the manual
   // "pick a drive and back up right now" path from Settings.
-  ipcMain.handle('backup:selectExternalFolder', wrap(async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  }));
+  // Anchored to the calling window with BrowserWindow.fromWebContents -
+  // dialog.showOpenDialog() with no parent isn't tied to the app window on
+  // Windows and can open behind it (especially when maximized), which reads
+  // as "nothing happened" when a click is clearly registering.
+  ipcMain.handle('backup:selectExternalFolder', async (event) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+      return ok(result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]);
+    } catch (err) {
+      return fail(err);
+    }
+  });
   ipcMain.handle('backup:runExternal', wrap((destinationFolder) => backup.backupToExternalFolder({
     getPool,
     sql,
