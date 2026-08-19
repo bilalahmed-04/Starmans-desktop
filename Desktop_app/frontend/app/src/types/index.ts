@@ -146,4 +146,5 @@ export type NavPage =
   | 'payment-new'
   | 'payment-weekly'
   | 'payment-monthly'
-  | 'settings';
+  | 'settings'
+  | 'backup';

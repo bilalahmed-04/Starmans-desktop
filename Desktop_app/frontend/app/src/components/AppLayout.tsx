@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import {
   Home as HomeIcon, ShoppingCart, Receipt, Factory, Package, FileText,
-  FlaskConical, Calculator, TrendingUp, CreditCard,
+  FlaskConical, Calculator, TrendingUp, CreditCard, HardDrive,
   ChevronDown, LogOut, Lock, Menu, X, RefreshCw
 } from 'lucide-react';
 
@@ -17,6 +17,7 @@ const navItems = [
   { page: 'expenses', label: 'Expenses', icon: Calculator },
   { page: 'profit', label: 'Profit', icon: TrendingUp },
   { page: 'payment', label: 'Payment', icon: CreditCard },
+  { page: 'backup', label: 'Backup', icon: HardDrive },
 ];
 
 interface AppLayoutProps {
