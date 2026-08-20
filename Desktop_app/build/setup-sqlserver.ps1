@@ -180,7 +180,28 @@ function Invoke-WithTimeout {
         # would make this helper unusable for an argument-less program.
         [string[]] $Arguments = @(),
         [Parameter(Mandatory)] [int]      $TimeoutMinutes,
-        [Parameter(Mandatory)] [string]   $What
+        [Parameter(Mandatory)] [string]   $What,
+        # Optional escape hatch from a bad assumption this function used to
+        # make everywhere: that a freshly-started .NET Process object's
+        # .ExitCode is always cleanly readable once WaitForExit() returns
+        # $true. On a real client machine (never exercised in CI - CI invokes
+        # this script directly, a client always goes through
+        # installer.nsh's NSIS -> nsExec::Exec -> cmd.exe /C "... > file 2>&1"
+        # -> elevated powershell.exe chain) that assumption broke: the
+        # self-extractor's files were fully and correctly extracted (confirmed
+        # from a client machine's temp folder - hundreds of MB, hundreds of
+        # files, exactly what a real extraction produces) while $proc.ExitCode
+        # still came back as $null, which "$null -ne 0" treats as a failure
+        # and "$($null)" renders as an empty string - producing the exact
+        # "exited with code  -" (blank) seen in the field. Reading .ExitCode
+        # itself is now wrapped below so that whatever is actually going on
+        # (a lost/re-pointed process handle several redirected-stdio layers
+        # deep) is logged instead of silently becoming $null.
+        #
+        # When given, a program that has actually finished doing its job -
+        # verified independently of whatever its process handle's exit code
+        # claims - is not a failure, no matter what $proc.ExitCode says.
+        [scriptblock] $SuccessCheck = $null
     )
 
     # Start-Process also rejects an empty -ArgumentList, so omit it entirely.
@@ -192,10 +213,29 @@ function Invoke-WithTimeout {
         try { & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null } catch {}
         throw "$What did not finish within $TimeoutMinutes minutes and was killed (process tree terminated). See %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for whatever it captured before being killed - if that log is EMPTY or absent, setup never launched and the failure is upstream of it (extraction), not inside SQL Setup."
     }
-    if ($proc.ExitCode -ne 0) {
-        throw "$What exited with code $($proc.ExitCode) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
+
+    $exitCode = $null
+    $exitCodeError = $null
+    try { $exitCode = $proc.ExitCode } catch { $exitCodeError = $_.Exception.Message }
+
+    if ($null -ne $exitCode -and $exitCode -eq 0) {
+        Write-Log "$What completed (exit code 0)."
+        return
     }
-    Write-Log "$What completed (exit code 0)."
+
+    if ($SuccessCheck -and (& $SuccessCheck)) {
+        # The exit code is unreliable/unreadable in this process chain, but
+        # the thing $What was supposed to produce is actually there - trust
+        # that over a handle that may not even point at the real worker
+        # process anymore. Still logged (not silently ignored) so this stays
+        # diagnosable if it ever masks a real problem.
+        $codeDesc = if ($exitCodeError) { "unreadable ($exitCodeError)" } else { "$exitCode" }
+        Write-Log "$What reported exit code $codeDesc, but its expected output is present - treating as success (PID $($proc.Id))."
+        return
+    }
+
+    $codeDesc = if ($exitCodeError) { "unreadable ($exitCodeError)" } elseif ($null -eq $exitCode) { "(none)" } else { "$exitCode" }
+    throw "$What exited with code $codeDesc (PID $($proc.Id)) - see %ProgramFiles%\Microsoft SQL Server\...\Setup Bootstrap\Log for details."
 }
 
 function Install-SqlServerExpress {
@@ -259,11 +299,17 @@ function Install-SqlServerExpress {
     $extractDir = Join-Path $env:TEMP "starmans-sqlexpr-extract"
     if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
 
-    Write-Log "Extracting bundled installer to $extractDir ..."
-    Invoke-WithTimeout -FilePath $InstallerPath -Arguments @('/Q', "/X:$extractDir") `
-        -TimeoutMinutes 10 -What 'SQL Server Express self-extractor'
-
     $setupExe = Join-Path $extractDir 'SETUP.EXE'
+
+    Write-Log "Extracting bundled installer to $extractDir ..."
+    # -SuccessCheck: see Invoke-WithTimeout's own comment for why this exists.
+    # For extraction specifically, "SETUP.EXE showed up where expected" is a
+    # strictly more trustworthy success signal than this self-extractor's
+    # process exit code has proven to be on a real client machine.
+    Invoke-WithTimeout -FilePath $InstallerPath -Arguments @('/Q', "/X:$extractDir") `
+        -TimeoutMinutes 10 -What 'SQL Server Express self-extractor' `
+        -SuccessCheck { Test-Path $setupExe }
+
     if (-not (Test-Path $setupExe)) {
         throw "Extraction finished but SETUP.EXE is not at $setupExe. The bundled package may not be the expected self-extracting SQLEXPR_x64_ENU.exe - check what download:sqlserver actually fetched."
     }
