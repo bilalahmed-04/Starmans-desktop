@@ -315,8 +315,19 @@ function Install-SqlServerExpress {
     }
 
     Write-Log "Running SETUP.EXE from extracted media..."
+    # Same -SuccessCheck reasoning as the extraction step above, and confirmed
+    # to matter in practice, not just in theory: on a real client machine this
+    # exact call reported a blank exit code ("exited with code (none)") after
+    # a real ~6-minute SQL Server Setup run, aborting the install - while that
+    # run's own C:\Program Files\Microsoft SQL Server\...\Setup Bootstrap\
+    # Log\Summary.txt showed "Feature: Database Engine Services / Status:
+    # Passed". The install had genuinely succeeded; only the exit code read
+    # was unreliable. Get-ExistingInstance reads the same registry key SQL
+    # Server Setup itself writes on a real success, independent of this
+    # process handle.
     Invoke-WithTimeout -FilePath $setupExe -Arguments $setupArgs `
-        -TimeoutMinutes 20 -What 'SQL Server Express installer'
+        -TimeoutMinutes 20 -What 'SQL Server Express installer' `
+        -SuccessCheck { Get-ExistingInstance }
 
     Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Log "SQL Server Express install completed (exit code 0)."
