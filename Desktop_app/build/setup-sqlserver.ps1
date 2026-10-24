@@ -172,6 +172,52 @@ function Get-InstanceStaticPort {
 # machine rather than a clean one.
 #
 # Failing loudly on a timeout is deliberate: the 1.0.11 release hung for the
+# SQL Server Setup's OWN verdict, read from the Summary.txt it writes itself.
+# This exists because -SuccessCheck { Get-ExistingInstance } was not a valid
+# proof of success: Setup writes the "Instance Names\SQL" registry key while
+# laying down files, which happens BEFORE the database-engine start/recovery
+# step. When that later step fails (exit 0x851A001A, "Wait on the Database
+# Engine recovery handle failed") the key is still there, so the instance
+# check passed and this script logged "treating as success" over a genuinely
+# failed install - observed on a real client machine (Windows 11 26200) where
+# Summary.txt said "Final result: Failed" at 17:42:54 and this script said
+# success at 17:43:01. Summary.txt is authoritative and independent of both
+# the unreliable process exit code and the registry key.
+function Get-SqlSetupSummary {
+    $summary = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\*\Setup Bootstrap\Log\Summary.txt" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime | Select-Object -Last 1
+    if (-not $summary) { return $null }
+
+    $text = Get-Content -LiteralPath $summary.FullName -ErrorAction SilentlyContinue
+    if (-not $text) { return $null }
+
+    $final = ($text | Where-Object { $_ -match '^\s*Final result:\s*(.+?)\s*$' } | Select-Object -First 1)
+    if (-not $final) { return $null }
+    $finalResult = $Matches[1]
+
+    $code = ($text | Where-Object { $_ -match '^\s*Exit code \(Decimal\):\s*(-?\d+)\s*$' } | Select-Object -First 1)
+    $exitCode = if ($code) { $Matches[1] } else { $null }
+
+    # The lines that actually say WHY, so a failure is diagnosable from our
+    # own log without the operator having to go find Summary.txt.
+    $reasons = $text | Where-Object {
+        # 'Next step for <Feature>:' - the feature name sits between the
+        # literal text and the colon, so this cannot be a bare alternation.
+        $_ -match '^\s*(Error description|Error help link|Feature failure reason|Status|Next step for [^:]+):'
+    } | Select-Object -First 12 | ForEach-Object { $_.Trim() }
+
+    return [pscustomobject]@{
+        Path        = $summary.FullName
+        FinalResult = $finalResult
+        # "Passed" is what a clean run writes; anything else (Failed,
+        # "Passed but reboot required", partial) is not something to silently
+        # treat as a working database engine.
+        Passed      = ($finalResult -match '^Passed')
+        ExitCode    = $exitCode
+        Reasons     = $reasons
+    }
+}
+
 # full 6-hour GitHub Actions ceiling with no diagnostic output at all.
 function Invoke-WithTimeout {
     param(
@@ -325,9 +371,29 @@ function Install-SqlServerExpress {
     # was unreliable. Get-ExistingInstance reads the same registry key SQL
     # Server Setup itself writes on a real success, independent of this
     # process handle.
+    # NOT { Get-ExistingInstance } alone - see Get-SqlSetupSummary for why
+    # that check passed over a failed install on a real client machine.
     Invoke-WithTimeout -FilePath $setupExe -Arguments $setupArgs `
         -TimeoutMinutes 20 -What 'SQL Server Express installer' `
-        -SuccessCheck { Get-ExistingInstance }
+        -SuccessCheck {
+            $sum = Get-SqlSetupSummary
+            if ($sum -and -not $sum.Passed) {
+                Write-Log "SQL Server Setup's own verdict: '$($sum.FinalResult)' (exit code $($sum.ExitCode)) - $($sum.Path)"
+                foreach ($r in $sum.Reasons) { Write-Log "  Summary.txt: $r" }
+                if ("$($sum.ExitCode)" -eq '-2061893606') {
+                    # 0x851A001A. Worth naming explicitly: the files install
+                    # fine and only the engine's first start/recovery fails,
+                    # so every surface-level check looks healthy and the real
+                    # detail is in the engine's own log, not Setup's.
+                    Write-Log "  This is SQL Server's 'Wait on the Database Engine recovery handle failed' error - the engine was installed but could not start and recover. Its own log has the reason: %ProgramFiles%\Microsoft SQL Server\MSSQL*.$InstanceName\MSSQL\Log\ERRORLOG"
+                }
+                return $false
+            }
+            # No Summary.txt to consult (Setup never got far enough to write
+            # one): fall back to the instance check rather than blocking an
+            # install that may be fine.
+            return [bool](Get-ExistingInstance)
+        }
 
     Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Log "SQL Server Express install completed (exit code 0)."
@@ -412,7 +478,56 @@ function Set-SqlServerConfig {
     }
 
     Write-Log "Restarting SQL Server service to apply config changes..."
-    Restart-Service -Name "MSSQL`$$InstanceName" -Force
+
+    # NOT Restart-Service. It waits only its own short, fixed window for the
+    # service to reach Running and then throws "Failed to start service", which
+    # is exactly how the 1.0.24 install failed on a real client machine: the
+    # log shows the start attempted and declared failed 3 seconds later, while
+    # a manual Start-Service on that same machine brought it up fine. The
+    # service was slow, not broken - this particular start is a FIRST start,
+    # where the instance creates tempdb and recovers master/model/msdb, which
+    # routinely takes far longer than restarting an already-warm instance.
+    #
+    # Same failure family as the blank-exit-code bug above: trusting a
+    # cmdlet's own verdict instead of checking the real end state. So stop and
+    # start explicitly and wait on the actual service status with a generous
+    # timeout, and when it genuinely does not come up, log SQL Server's own
+    # ERRORLOG tail - which names the real cause (port already in use, corrupt
+    # master, permissions) instead of the opaque one-liner this used to emit.
+    $svcName = "MSSQL`$$InstanceName"
+    $svc = Get-Service -Name $svcName -ErrorAction Stop
+
+    if ($svc.Status -ne 'Stopped') {
+        Stop-Service -Name $svcName -Force -ErrorAction SilentlyContinue
+        try {
+            $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+        } catch {
+            # Not fatal on its own: Start-Service below is what actually has
+            # to succeed, and reporting the stop as the failure would point at
+            # the wrong step.
+            Write-Log "WARNING: service did not report Stopped within 60s (status: $($svc.Status)) - starting anyway."
+        }
+    }
+
+    # -ErrorVariable, because Windows' own start error (e.g. 1069 "logon
+    # failure", 1067 "process terminated unexpectedly") is usually the most
+    # informative line there is, and SilentlyContinue alone would discard it.
+    Start-Service -Name $svcName -ErrorAction SilentlyContinue -ErrorVariable startErr
+    try {
+        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(180))
+        $svc.Refresh()
+        Write-Log "SQL Server service '$svcName' is running."
+    } catch {
+        $svc.Refresh()
+        if ($startErr) { Write-Log "  Start-Service reported: $($startErr[0].Exception.Message)" }
+        Write-Log "Service '$svcName' did not reach Running within 180s (status: $($svc.Status)). SQL Server's own error log follows:"
+        Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server\MSSQL*.$InstanceName\MSSQL\Log\ERRORLOG" -ErrorAction SilentlyContinue |
+            Select-Object -First 1 |
+            Get-Content -Tail 40 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Log "  ERRORLOG: $_" }
+        throw "Failed to start service '$svcName' after waiting 180s - see the ERRORLOG lines above for the reason."
+    }
+
     Start-Sleep -Seconds 5
 }
 
@@ -737,7 +852,31 @@ try {
         }
         Install-SqlServerExpress
     } else {
-        Write-Log "Existing SQL Server instance '$InstanceName' found - repairing/verifying configuration instead of installing."
+        # An instance being REGISTERED is not the same as an instance that has
+        # ever worked. A failed install (exit 0x851A001A, engine never started)
+        # leaves the registry key behind with no data directories, and this
+        # branch then tried to "repair" an engine that cannot start - which on
+        # a real client machine produced three identical FATAL runs in a row,
+        # each one skipping the install that might have fixed it. Detect that
+        # state and say what actually has to happen, rather than looping.
+        $instanceRoot = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -Directory -Filter "MSSQL*.$InstanceName" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        $masterMdf = if ($instanceRoot) { Join-Path $instanceRoot.FullName 'MSSQL\DATA\master.mdf' } else { $null }
+
+        if (-not $masterMdf -or -not (Test-Path $masterMdf)) {
+            throw @"
+Instance '$InstanceName' is registered but its system databases are missing (no master.mdf under $(if ($instanceRoot) { $instanceRoot.FullName } else { "any MSSQL*.$InstanceName folder" })).
+That means a previous SQL Server install failed partway - the engine has never started, so there is nothing here to repair.
+Remove the broken instance and reboot before installing again:
+  1. <installer>\SETUP.EXE /ACTION=Uninstall /FEATURES=SQLEngine,Replication /INSTANCENAME=$InstanceName /QUIET
+  2. Reboot (SQL Server uninstall leaves file and registry locks behind).
+  3. Run this installer again.
+If the install keeps failing at the same point, the reason is in SQL Server Setup's own log:
+  %ProgramFiles%\Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt
+"@
+        }
+
+        Write-Log "Existing SQL Server instance '$InstanceName' found (system databases present) - repairing/verifying configuration instead of installing."
     }
 
     Set-SqlServerConfig
